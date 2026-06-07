@@ -132,12 +132,19 @@ ai-litellm reasoning doctor
 ai-litellm sync
 ```
 
+`ai-litellm sync` regenerates derived config and restarts the shared proxy by
+default, which can interrupt active LiteLLM-backed sessions. Use
+`ai-litellm sync --dry-run` to inspect actions first, or `--no-restart` to
+regenerate without bouncing the proxy.
+
 Then test one harness:
 
 ```zsh
 claude-litellm haiku -p 'Reply with exactly OK' --no-session-persistence --tools ''
 codex-litellm gpt-5.4 exec --skip-git-repo-check --sandbox read-only 'Reply with exactly OK'
 ```
+
+Those harness smoke tests make real provider requests and may be billable.
 
 ## Token Budget Policy
 

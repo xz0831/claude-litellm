@@ -99,7 +99,7 @@ ai-litellm model   list|info [model]|limits [model]|reasoning [model]|probe <mod
 ai-litellm route   list|info [model]|probe <model...>|check [model...]
 ai-litellm context matrix [filter]|probe <surface|all>|doctor
 ai-litellm key     status
-ai-litellm sync          # 단일 출처에서 파생 설정 재생성 + proxy 재기동
+ai-litellm sync [--dry-run] [--no-restart]  # 단일 출처에서 파생 설정 재생성 + 기본적으로 proxy 재기동
 ai-litellm capabilities  # proxy/runtime capability 요약
 ```
 
@@ -153,7 +153,7 @@ ai-litellm proxy logs
 ai-litellm proxy doctor
 ```
 
-`ai-litellm proxy doctor`는 running proxy가 현재 registry hash를 로드했는지 확인한다. registry를 바꾼 뒤 재기동을 잊으면 `running proxy loaded current config` 또는 `running proxy routes match config`가 실패한다. 토큰 한도를 바꾼 경우 `ai-litellm sync` 한 번이면 파생 설정 재생성과 재기동이 모두 처리된다.
+`ai-litellm proxy doctor`는 running proxy가 현재 registry hash를 로드했는지 확인한다. registry를 바꾼 뒤 재기동을 잊으면 `running proxy loaded current config` 또는 `running proxy routes match config`가 실패한다. 토큰 한도를 바꾼 경우 `ai-litellm sync` 한 번이면 파생 설정 재생성과 재기동이 모두 처리된다. 재기동 없이 생성물만 갱신하려면 `ai-litellm sync --no-restart`, 변경 없이 동작 계획만 확인하려면 `ai-litellm sync --dry-run`을 쓴다.
 
 proxy start에는 lock을 둬서 꺼진 상태에서 동시에 시작해도 중복 기동을 피한다. 단, `stop`/`restart`/`sync`는 공유 proxy를 내리므로 실행 중인 Claude/Codex LiteLLM 세션 모두에 영향을 준다.
 
@@ -206,7 +206,7 @@ CLAUDE_CODE_MAX_OUTPUT_TOKENS = output_reservation
 CLAUDE_CODE_AUTO_COMPACT_WINDOW = effective_input
 ```
 
-이 분리는 harness별 runtime 예약에만 적용한다. Codex/OpenCode/Goose가 capability metadata로 쓰는 `max_output_tokens` anchor는 바꾸지 않는다.
+이 분리는 harness별 runtime 예약에만 적용한다. Codex/OpenCode/Goose가 capability metadata로 쓰는 `max_output_tokens` anchor는 바꾸지 않는다. Codex는 현재 별도 output reservation policy를 두지 않고 generated catalog의 context metadata와 Codex 자체 compaction에 맡긴다. 공유 윈도우 backend에서 raw LiteLLM client까지 hard-clamp하려면 proxy-level clamp hook 또는 `modify_params` 정책을 별도로 켜야 하며, 현재 doctor는 shared-window route에 gateway clamp가 없으면 경고한다.
 
 native Codex/Claude의 제품 세션 budget은 이 앵커를 상속하지 않는다. OpenAI API의 `gpt-5.5` context, Codex App/CLI OAuth context, Codex LiteLLM facade context는 서로 다른 claim으로 관리한다.
 

@@ -2,8 +2,9 @@
 __pycache__/
 *.pyc
 
-# Runtime state. These are created under ~/.config at install/run time, not kept
-# in this repository.
+# Runtime state. Installed packages keep state under
+# ${XDG_DATA_HOME:-~/.local/share}/ai-litellm-fabric/state; ~/.config/* paths
+# are legacy migration fallbacks only. Runtime state is not kept in this repo.
 *.log
 *.pid
 *.started_at

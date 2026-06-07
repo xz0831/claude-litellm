@@ -75,7 +75,7 @@ backup_if_exists() {
   local target="$1"
   [[ -e "$target" || -L "$target" ]] || return 0
   local stamp backup
-  stamp="$(date +%Y%m%d-%H%M%S)"
+  stamp="$(date +%Y%m%d-%H%M%S).$$"
   backup="${target}.bak.${stamp}"
   run mv "$target" "$backup"
 }
@@ -84,13 +84,22 @@ install_rendered() {
   local src="$1"
   local dest="$2"
   run mkdir -p "${dest:h}"
-  backup_if_exists "$dest"
   if (( dry_run )); then
     log "dry-run render ${src} -> ${dest} (__HOME__=${HOME}, __FABRIC_HOME__=${prefix})"
   else
+    local tmp
+    tmp="${dest}.tmp.$$"
     HOME_REPL="$HOME" FABRIC_HOME_REPL="$prefix" perl -pe \
       's#__HOME__#$ENV{HOME_REPL}#g; s#__FABRIC_HOME__#$ENV{FABRIC_HOME_REPL}#g' \
-      "$src" > "$dest"
+      "$src" > "$tmp"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
+        rm -f "$tmp"
+        return 0
+      fi
+      backup_if_exists "$dest"
+    fi
+    mv "$tmp" "$dest"
   fi
 }
 
@@ -98,6 +107,10 @@ install_executable() {
   local src="$1"
   local dest="$2"
   run mkdir -p "${dest:h}"
+  if (( ! dry_run )) && [[ -f "$dest" ]] && cmp -s "$src" "$dest"; then
+    chmod 755 "$dest"
+    return 0
+  fi
   backup_if_exists "$dest"
   run cp "$src" "$dest"
   run chmod 755 "$dest"
@@ -107,15 +120,25 @@ install_shim() {
   local name="$1"
   local dest="$bin_dir/$name"
   run mkdir -p "$bin_dir"
-  backup_if_exists "$dest"
   if (( dry_run )); then
     log "dry-run shim ${dest} -> ${prefix}/bin/${name}"
   else
+    local tmp
+    tmp="${dest}.tmp.$$"
     {
-      print '#!/usr/bin/env zsh'
-      print "export AI_LITELLM_FABRIC_HOME=${(q)prefix}"
-      print 'exec "$AI_LITELLM_FABRIC_HOME/bin/'"$name"'" "$@"'
-    } > "$dest"
+      print -r -- '#!/usr/bin/env zsh'
+      print -r -- "export AI_LITELLM_FABRIC_HOME=${(qq)prefix}"
+      print -r -- 'exec "$AI_LITELLM_FABRIC_HOME/bin/'"$name"'" "$@"'
+    } > "$tmp"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
+        rm -f "$tmp"
+        chmod 755 "$dest"
+        return 0
+      fi
+      backup_if_exists "$dest"
+    fi
+    mv "$tmp" "$dest"
     chmod 755 "$dest"
   fi
 }
@@ -166,6 +189,20 @@ for dir in \
   "$prefix/state/goose-litellm" \
   "$prefix/state/opencode-litellm"; do
   run mkdir -p "$dir"
+done
+
+for dir in \
+  "$prefix/state" \
+  "$prefix/state/ai-litellm" \
+  "$prefix/state/claude-litellm" \
+  "$prefix/state/claude-litellm/claude-config" \
+  "$prefix/state/codex-litellm" \
+  "$prefix/state/codex-litellm/codex-home" \
+  "$prefix/state/goose-litellm" \
+  "$prefix/state/opencode-litellm"; do
+  if (( dry_run )) || [[ -d "$dir" ]]; then
+    run chmod 700 "$dir"
+  fi
 done
 
 install_rendered "$repo_root/config/litellm_config.yaml" "$prefix/config/litellm_config.yaml"

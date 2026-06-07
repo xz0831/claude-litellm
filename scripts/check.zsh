@@ -32,16 +32,45 @@ if rg --glob '!scripts/check.zsh' -n 'sk-or-v1-|sk-proj-|sk-ant-|OPENROUTER_API_
 fi
 
 tmp_home="$(mktemp -d)"
-trap 'rm -rf "$tmp_home"' EXIT
+spaced_home="$(mktemp -d)"
+trap 'rm -rf "$tmp_home" "$spaced_home"' EXIT
 HOME="$tmp_home" "$repo_root/scripts/install.zsh" >/dev/null
 HOME="$tmp_home" zsh -fc '
+prefix="$HOME/.local/share/ai-litellm-fabric"
 test -f "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/lib.zsh"
 test -f "$HOME/.local/share/ai-litellm-fabric/config/litellm_config.yaml"
 test -x "$HOME/.local/share/ai-litellm-fabric/bin/claude-litellm"
 test -x "$HOME/.local/bin/claude-litellm"
-source "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/lib.zsh"
+"$HOME/.local/bin/ai-litellm" --help >/dev/null
+! grep -R "__HOME__\\|__FABRIC_HOME__" "$prefix/config" "$prefix/docs" >/dev/null
+grep -q "AI_LITELLM_FABRIC_HOME=" "$HOME/.local/bin/ai-litellm"
+grep -q "exec.*bin/ai-litellm" "$HOME/.local/bin/ai-litellm"
+source "$prefix/config/ai-litellm/lib.zsh"
+for harness in "${(@f)$(ai_litellm_harness_names)}"; do
+  ai_litellm_harness_validate "$harness"
+done
 ai_litellm_model_limits GLM-5.1 >/dev/null
-ai_litellm_harness_output_budget claude haiku GLM-5.1 >/dev/null
+budget="$(ai_litellm_harness_output_budget claude sonnet Kimi-K2.6)"
+test "$(print -r -- "$budget" | jq -r ".effectiveInput > 0 and .reservation < .capability")" = "true"
+ai_litellm_render_opencode_config opencode
+test "$(stat -f %Lp "$prefix/state")" = "700"
+test "$(stat -f %Lp "$prefix/state/ai-litellm")" = "700"
+test "$(stat -f %Lp "$prefix/state/opencode-litellm/opencode.json")" = "600"
+print -r -- "OPENROUTER_API_KEY=PLACEHOLDER\$(touch $HOME/PWNED)END" > "$prefix/state/ai-litellm/env"
+test "$(ai_litellm_env_value OPENROUTER_API_KEY)" = "PLACEHOLDER\$(touch $HOME/PWNED)END"
+test ! -e "$HOME/PWNED"
+sleep 60 &
+foreign_pid=$!
+mkdir -p "$HOME/.config/ai-litellm"
+print -r -- "$foreign_pid" > "$HOME/.config/ai-litellm/litellm.pid"
+! ai_litellm_pid_running
+ai_litellm_stop >/dev/null 2>&1
+kill -0 "$foreign_pid"
+kill "$foreign_pid"
+rmdir "$HOME/.config/ai-litellm" "$HOME/.config" 2>/dev/null || true
+ai_litellm_restart() { echo "unexpected restart" >&2; return 99; }
+sync_output="$(ai_litellm_sync --dry-run)"
+[[ "$sync_output" == *"proxy restart skipped"* ]]
 test ! -e "$HOME/litellm_config.yaml"
 test ! -e "$HOME/.config/ai-litellm"
 test ! -e "$HOME/.config/claude-litellm"
@@ -49,5 +78,27 @@ test ! -e "$HOME/.config/codex-litellm"
 test ! -e "$HOME/.claude"
 test ! -e "$HOME/.codex"
 '
+
+spaced_prefix="$spaced_home/with space/ai-litellm-fabric"
+HOME="$spaced_home" "$repo_root/scripts/install.zsh" --prefix "$spaced_prefix" >/dev/null
+HOME="$spaced_home" "$spaced_home/.local/bin/ai-litellm" --help >/dev/null
+grep -q "'$spaced_prefix'" "$spaced_home/.local/bin/ai-litellm"
+HOME="$spaced_home" "$repo_root/scripts/install.zsh" --prefix "$spaced_prefix" >/dev/null
+if find "$spaced_home/.local" -name "*.bak.*" | grep -q .; then
+  echo "Unexpected backup files after identical reinstall" >&2
+  find "$spaced_home/.local" -name "*.bak.*" >&2
+  exit 1
+fi
+HOME="$spaced_home" "$repo_root/scripts/uninstall.zsh" --prefix "$spaced_prefix" >/dev/null
+test ! -e "$spaced_prefix"
+if find "$spaced_home/.local/bin" -type f | grep -q .; then
+  echo "Unexpected command or backup files after uninstall" >&2
+  find "$spaced_home/.local/bin" >&2
+  exit 1
+fi
+if HOME="$spaced_home" "$repo_root/scripts/uninstall.zsh" --prefix "$spaced_home/not-fabric" >/dev/null 2>&1; then
+  echo "Unsafe uninstall prefix was accepted" >&2
+  exit 1
+fi
 
 echo "ok"

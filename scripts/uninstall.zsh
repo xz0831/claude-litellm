@@ -75,8 +75,26 @@ run() {
   fi
 }
 
+assert_fabric_prefix_safe() {
+  if [[ "${prefix:t}" != "ai-litellm-fabric" ]]; then
+    echo "Refusing to remove non ai-litellm-fabric prefix: $prefix" >&2
+    echo "Pass the real package prefix, not a parent directory." >&2
+    exit 1
+  fi
+
+  if [[ -e "$prefix" && ! -f "$prefix/config/ai-litellm/lib.zsh" ]]; then
+    echo "Refusing to remove prefix that does not look like an ai-litellm-fabric package: $prefix" >&2
+    exit 1
+  fi
+}
+
+assert_fabric_prefix_safe
+
 for script in ai-litellm claude-litellm codex-litellm goose-litellm opencode-litellm openrouter-key-status litellm-master-key-status; do
   run rm -f "$bin_dir/$script"
+  for backup in "$bin_dir/$script".bak.*(N); do
+    run rm -f "$backup"
+  done
 done
 
 run rm -rf "$prefix"
@@ -92,4 +110,6 @@ if (( remove_legacy )); then
 fi
 
 print -r -- "Removed ai-litellm-fabric package/shims."
-(( remove_legacy )) && print -r -- "Removed legacy spread-out wrapper paths."
+if (( remove_legacy )); then
+  print -r -- "Removed legacy spread-out wrapper paths."
+fi

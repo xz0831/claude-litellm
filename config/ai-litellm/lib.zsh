@@ -15,6 +15,7 @@ export AI_LITELLM_LOG_FILE="${AI_LITELLM_LOG_FILE:-$AI_LITELLM_HOME/litellm.log}
 export AI_LITELLM_CONFIG_HASH_FILE="${AI_LITELLM_CONFIG_HASH_FILE:-$AI_LITELLM_HOME/litellm.config.sha256}"
 export AI_LITELLM_STARTED_AT_FILE="${AI_LITELLM_STARTED_AT_FILE:-$AI_LITELLM_HOME/litellm.started_at}"
 export AI_LITELLM_REASONING_OBS_FILE="${AI_LITELLM_REASONING_OBS_FILE:-$AI_LITELLM_HOME/reasoning-observations.json}"
+export AI_LITELLM_LOCK_MAX_AGE_SECONDS="${AI_LITELLM_LOCK_MAX_AGE_SECONDS:-300}"
 export AI_LITELLM_LEGACY_ENV="${AI_LITELLM_LEGACY_ENV:-$HOME/.config/ai-litellm/env}"
 export AI_LITELLM_LEGACY_PID_FILE="${AI_LITELLM_LEGACY_PID_FILE:-$HOME/.config/ai-litellm/litellm.pid}"
 export AI_LITELLM_LEGACY_LOG_FILE="${AI_LITELLM_LEGACY_LOG_FILE:-$HOME/.config/ai-litellm/litellm.log}"
@@ -73,14 +74,31 @@ ai_litellm_env_value() {
   local env_file
   for env_file in "$AI_LITELLM_ENV" "$AI_LITELLM_LEGACY_ENV" "$AI_LITELLM_LEGACY_CLAUDE_ENV"; do
     [[ -f "$env_file" ]] || continue
-    (
-      emulate -L zsh
-      set -a
-      source "$env_file" >/dev/null 2>&1 || exit 1
-      local value="${(P)key}"
-      [[ -n "$value" ]] || exit 1
-      printf '%s\n' "$value"
-    ) && return 0
+    node -e '
+const fs = require("fs");
+const file = process.argv[1];
+const wanted = process.argv[2];
+const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+for (let line of lines) {
+  line = line.trim();
+  if (!line || line.startsWith("#")) continue;
+  if (line.startsWith("export ")) line = line.slice("export ".length).trimStart();
+  const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+  if (!match || match[1] !== wanted) continue;
+  let value = match[2];
+  if (
+    value.length >= 2 &&
+    ((value.startsWith("\"") && value.endsWith("\"")) ||
+     (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1);
+  }
+  if (!value) process.exit(1);
+  console.log(value);
+  process.exit(0);
+}
+process.exit(1);
+' "$env_file" "$key" && return 0
   done
   return 1
 }
@@ -139,6 +157,16 @@ ai_litellm_base_url() {
 
 ai_litellm_api_base_url() {
   printf '%s/v1\n' "$(ai_litellm_base_url)"
+}
+
+ai_litellm_curl_auth() {
+  local master_key="$1"
+  shift
+  if [[ -n "$master_key" ]]; then
+    printf 'header = "Authorization: Bearer %s"\n' "$master_key" | curl -K - "$@"
+  else
+    curl "$@"
+  fi
 }
 
 ai_litellm_model_names() {
@@ -366,7 +394,7 @@ for (const adapter of schema.properties?.adapter?.enum || []) console.log(adapte
 
 ai_litellm_harness_validate() {
   local harness="$1"
-  local descriptor command adapter schema
+  local descriptor adapter schema
   descriptor="$(ai_litellm_harness_descriptor "$harness")" || {
     echo "Missing harness descriptor: $AI_LITELLM_HARNESSES_DIR/$harness.json" >&2
     return 1
@@ -390,6 +418,10 @@ const requireStringArray = (object, key, label, {allowEmpty = false} = {}) => {
   if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.some((item) => typeof item !== "string" || item.length === 0)) {
     errors.push(`${label}.${key} must be ${allowEmpty ? "an" : "a non-empty"} array of strings`);
   }
+};
+const requirePositiveInteger = (object, key, label) => {
+  const value = object?.[key];
+  if (!Number.isInteger(value) || value <= 0) errors.push(`${label}.${key} must be a positive integer`);
 };
 const missing = required.filter((key) => descriptor[key] == null);
 if (missing.length) {
@@ -430,7 +462,11 @@ switch (descriptor.adapter) {
     requireString(provider, "baseUrl", "provider");
     requireString(auth, "env", "provider.auth");
     requireStringArray(models, "tiers", "models");
-    for (const key of ["baseUrlEnv", "discoveryEnv", "tierModelEnvPrefix", "tierDisplayNameEnvPrefix"]) requireString(adapterConfig, key, "adapterConfig");
+    for (const key of ["baseUrlEnv", "discoveryEnv", "tierModelEnvPrefix", "tierDisplayNameEnvPrefix", "autoCompactWindowEnv", "maxOutputTokensEnv"]) requireString(adapterConfig, key, "adapterConfig");
+    if (!isObject(adapterConfig.outputReservation)) errors.push("adapterConfig.outputReservation must be an object");
+    requirePositiveInteger(adapterConfig.outputReservation || {}, "default", "adapterConfig.outputReservation");
+    requirePositiveInteger(adapterConfig.outputReservation || {}, "tokenizerHeadroom", "adapterConfig.outputReservation");
+    requirePositiveInteger(adapterConfig.outputReservation || {}, "minimumInput", "adapterConfig.outputReservation");
     break;
   case "codex-cli":
     for (const key of ["home", "settings", "codexHome", "config", "modelCatalog"]) requireString(paths, key, "paths");
@@ -461,13 +497,18 @@ if (errors.length) {
 }
 ' "$descriptor" "$schema" || return 1
 
-  command="$(ai_litellm_harness_json "$harness" command 2>/dev/null)" || return 1
   adapter="$(ai_litellm_harness_json "$harness" adapter 2>/dev/null)" || return 1
+  [[ -n "$adapter" ]]
+}
+
+ai_litellm_harness_cli_available() {
+  local harness="$1"
+  local command
+  command="$(ai_litellm_harness_json "$harness" command 2>/dev/null)" || return 1
   command -v "$command" >/dev/null 2>&1 || {
     echo "Harness command not available for $harness: $command" >&2
     return 1
   }
-  [[ -n "$adapter" ]]
 }
 
 ai_litellm_harness_template_json() {
@@ -695,6 +736,7 @@ ai_litellm_harness_info() {
   echo "Isolation: $(ai_litellm_harness_json "$harness" isolation.kind 2>/dev/null || printf 'unknown')"
   echo "Base URL:  $(ai_litellm_harness_json "$harness" provider.baseUrl 2>/dev/null | sed "s#{{ai.baseUrl}}#$(ai_litellm_base_url)#; s#{{ai.apiBaseUrl}}#$(ai_litellm_api_base_url)#" || printf 'n/a')"
   ai_litellm_harness_validate "$harness" >/dev/null 2>&1 && echo "Status:    ok" || echo "Status:    invalid"
+  ai_litellm_harness_cli_available "$harness" >/dev/null 2>&1 && echo "CLI:       installed" || echo "CLI:       not installed"
 }
 
 ai_litellm_harness_parse_model_selection() {
@@ -822,7 +864,11 @@ end
 if adapter["enabledProviders"]
   config["enabled_providers"] = adapter["enabledProviders"]
 end
-File.write(config_path, JSON.pretty_generate(config) + "\n")
+tmp = "#{config_path}.tmp.#{$$}"
+File.open(tmp, File::WRONLY | File::CREAT | File::TRUNC, 0600) do |file|
+  file.write(JSON.pretty_generate(config) + "\n")
+end
+File.rename(tmp, config_path)
 ' "$descriptor" "$AI_LITELLM_CONFIG" "$(ai_litellm_api_base_url)" "$config_path"
 }
 
@@ -906,6 +952,7 @@ ai_litellm_launch() {
   shift
 
   ai_litellm_harness_validate "$harness" || return $?
+  ai_litellm_harness_cli_available "$harness" || return $?
   local adapter
   adapter="$(ai_litellm_harness_json "$harness" adapter)" || return 1
 
@@ -1208,9 +1255,17 @@ ai_litellm_pid_from_file() {
   [[ -f "$pid_file" ]] || return 1
   local pid
   pid="$(<"$pid_file")"
-  [[ -n "$pid" ]] || return 1
-  kill -0 "$pid" 2>/dev/null || return 1
+  ai_litellm_pid_is_litellm "$pid" || return 1
   printf '%s\n' "$pid"
+}
+
+ai_litellm_pid_is_litellm() {
+  local pid="$1"
+  [[ "$pid" == <-> ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  local command_line
+  command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$command_line" == *litellm* ]]
 }
 
 ai_litellm_active_pid_file() {
@@ -1238,7 +1293,7 @@ ai_litellm_health() {
   master_key="$(ai_litellm_master_key 2>/dev/null)" || true
 
   if [[ -n "$master_key" ]]; then
-    curl --max-time 3 -fsS -H "Authorization: Bearer $master_key" "$(ai_litellm_base_url)/health/readiness" >/dev/null 2>&1
+    ai_litellm_curl_auth "$master_key" --max-time 3 -fsS "$(ai_litellm_base_url)/health/readiness" >/dev/null 2>&1
   else
     curl --max-time 3 -fsS "$(ai_litellm_base_url)/health/readiness" >/dev/null 2>&1
   fi
@@ -1266,7 +1321,7 @@ ai_litellm_proxy_config_current() {
 ai_litellm_proxy_model_names() {
   local master_key
   master_key="$(ai_litellm_master_key 2>/dev/null)" || return 1
-  curl --max-time 5 -fsS -H "Authorization: Bearer $master_key" "$(ai_litellm_base_url)/model/info" \
+  ai_litellm_curl_auth "$master_key" --max-time 5 -fsS "$(ai_litellm_base_url)/model/info" \
     | jq -r '.data[].model_name'
 }
 
@@ -1275,11 +1330,25 @@ ai_litellm_proxy_registry_matches_file() {
   diff -u <(ai_litellm_model_names | sort -u) <(ai_litellm_proxy_model_names | sort -u) >/dev/null
 }
 
+ai_litellm_reachable_proxy_current() {
+  ai_litellm_proxy_config_current || return 1
+  ai_litellm_proxy_registry_matches_file || return 1
+}
+
 ai_litellm_lock_stale() {
   [[ -d "$AI_LITELLM_LOCK_DIR" ]] || return 1
   local lock_pid=""
   [[ -f "$AI_LITELLM_LOCK_DIR/pid" ]] && lock_pid="$(<"$AI_LITELLM_LOCK_DIR/pid")"
-  [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null && return 1
+  if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+    local age=0
+    if [[ -f "$AI_LITELLM_LOCK_DIR/started_at" ]]; then
+      age="$(perl -e 'print int(time - (stat($ARGV[0]))[9])' "$AI_LITELLM_LOCK_DIR/started_at" 2>/dev/null || printf '0')"
+    fi
+    if (( ${age:-0} > ${AI_LITELLM_LOCK_MAX_AGE_SECONDS:-300} )) && ! ai_litellm_health; then
+      return 0
+    fi
+    return 1
+  fi
   return 0
 }
 
@@ -1333,8 +1402,8 @@ ai_litellm_start() {
   [[ -f "$AI_LITELLM_LOG_FILE" ]] && chmod 600 "$AI_LITELLM_LOG_FILE" 2>/dev/null || true
 
   if ai_litellm_health; then
-    if ! ai_litellm_proxy_config_current; then
-      echo "LiteLLM is reachable at $(ai_litellm_base_url), but it has not loaded the current $AI_LITELLM_CONFIG." >&2
+    if ! ai_litellm_reachable_proxy_current; then
+      echo "LiteLLM is reachable at $(ai_litellm_base_url), but it has not loaded the current $AI_LITELLM_CONFIG routes." >&2
       echo "Run 'ai-litellm sync' before launching harnesses." >&2
       return 1
     fi
@@ -1346,8 +1415,8 @@ ai_litellm_start() {
   ai_litellm_acquire_lock
   lock_result=$?
   if (( lock_result == 2 )); then
-    if ! ai_litellm_proxy_config_current; then
-      echo "LiteLLM is reachable at $(ai_litellm_base_url), but it has not loaded the current $AI_LITELLM_CONFIG." >&2
+    if ! ai_litellm_reachable_proxy_current; then
+      echo "LiteLLM is reachable at $(ai_litellm_base_url), but it has not loaded the current $AI_LITELLM_CONFIG routes." >&2
       echo "Run 'ai-litellm sync' before launching harnesses." >&2
       return 1
     fi
@@ -1361,8 +1430,8 @@ ai_litellm_start() {
 
   if ai_litellm_health; then
     ai_litellm_clear_lock
-    if ! ai_litellm_proxy_config_current; then
-      echo "LiteLLM is reachable at $(ai_litellm_base_url), but it has not loaded the current $AI_LITELLM_CONFIG." >&2
+    if ! ai_litellm_reachable_proxy_current; then
+      echo "LiteLLM is reachable at $(ai_litellm_base_url), but it has not loaded the current $AI_LITELLM_CONFIG routes." >&2
       echo "Run 'ai-litellm sync' before launching harnesses." >&2
       return 1
     fi
@@ -1559,7 +1628,7 @@ ai_litellm_route_info() {
 
   local model_filter="$1"
   local payload
-  if ! payload="$(curl --max-time 5 -fsS -H "Authorization: Bearer $master_key" "$(ai_litellm_base_url)/model/info")"; then
+  if ! payload="$(ai_litellm_curl_auth "$master_key" --max-time 5 -fsS "$(ai_litellm_base_url)/model/info")"; then
     echo "LiteLLM route metadata unavailable at $(ai_litellm_base_url)/model/info; is the proxy running?" >&2
     return 1
   fi
@@ -1601,8 +1670,7 @@ ai_litellm_probe_route() {
     temperature: 0
   }')"
 
-  if curl --max-time 90 -fsS \
-    -H "Authorization: Bearer $master_key" \
+  if ai_litellm_curl_auth "$master_key" --max-time 90 -fsS \
     -H "Content-Type: application/json" \
     "$(ai_litellm_api_base_url)/chat/completions" \
     -d "$payload" \
@@ -1743,6 +1811,9 @@ ai_litellm_doctor_harnesses() {
   local harness
   for harness in "${(@f)$(ai_litellm_harness_names)}"; do
     ai_litellm_doctor_check "harness descriptor valid: $harness" ai_litellm_harness_validate "$harness" || failed=1
+    if ! ai_litellm_harness_cli_available "$harness" >/dev/null 2>&1; then
+      echo "warn harness CLI not installed: $harness ($(ai_litellm_harness_json "$harness" command 2>/dev/null || printf 'unknown'))"
+    fi
   done
   return $failed
 }
@@ -1919,27 +1990,64 @@ ai_litellm_render_codex_config() {
 # Regenerate every derived artifact from the single source and reload the proxy.
 # After editing a token limit in litellm_config.yaml, this is the one command to run.
 ai_litellm_sync() {
-  local failed=0 codex_command codex_wrapper
+  local failed=0 dry_run=0 restart=1 codex_command codex_wrapper arg
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run)
+        dry_run=1
+        restart=0
+        ;;
+      --no-restart)
+        restart=0
+        ;;
+      -h|--help)
+        echo "Usage: ai-litellm sync [--dry-run] [--no-restart]"
+        echo "  --dry-run     print derived-artifact actions without writing or restarting"
+        echo "  --no-restart  regenerate derived artifacts without restarting the shared proxy"
+        return 0
+        ;;
+      *)
+        echo "Unknown sync option: $arg" >&2
+        return 1
+        ;;
+    esac
+  done
+
   echo "ai-litellm sync"
+  (( dry_run )) && echo "- dry-run: no files will be changed and proxy will not restart"
 
   codex_command="$(ai_litellm_harness_json codex command 2>/dev/null || printf 'codex')"
   codex_wrapper="$AI_LITELLM_BIN_DIR/codex-litellm"
-  if [[ -x "$codex_wrapper" && -n "$codex_command" ]] && command -v "$codex_command" >/dev/null 2>&1; then
-    echo "- codex catalog"
-    "$codex_wrapper" --refresh-catalog || failed=1
+  if [[ -x "$codex_wrapper" ]]; then
+    if [[ -n "$codex_command" ]] && command -v "$codex_command" >/dev/null 2>&1; then
+      echo "- codex catalog"
+      if (( ! dry_run )); then
+        "$codex_wrapper" --refresh-catalog || failed=1
+      fi
+    else
+      echo "- codex catalog skipped (${codex_command:-codex} not installed)"
+    fi
     echo "- codex config"
-    ai_litellm_render_codex_config || failed=1
+    if (( ! dry_run )); then
+      ai_litellm_render_codex_config || failed=1
+    fi
   else
-    echo "- codex catalog/config skipped (${codex_command:-codex} not installed)"
+    echo "- codex catalog/config skipped ($codex_wrapper not installed)"
   fi
 
   if ai_litellm_harness_descriptor opencode >/dev/null 2>&1; then
     echo "- opencode config"
-    ai_litellm_render_opencode_config opencode || failed=1
+    if (( ! dry_run )); then
+      ai_litellm_render_opencode_config opencode || failed=1
+    fi
   fi
 
-  echo "- proxy restart (reloads model_info + enforcement)"
-  ai_litellm_restart || failed=1
+  if (( restart )); then
+    echo "- proxy restart (reloads model_info + enforcement)"
+    ai_litellm_restart || failed=1
+  else
+    echo "- proxy restart skipped"
+  fi
 
   echo "- claude/goose derive limits at next launch (no regeneration needed)"
   return $failed
@@ -2504,8 +2612,7 @@ ai_litellm_model_reasoning_probe() {
   tmp="$(mktemp "${TMPDIR:-/tmp}/ai-litellm-reasoning-probe.XXXXXX")" || return 1
 
   http_code="$(
-    curl --max-time 90 -sS -o "$tmp" -w "%{http_code}" \
-      -H "Authorization: Bearer $master_key" \
+    ai_litellm_curl_auth "$master_key" --max-time 90 -sS -o "$tmp" -w "%{http_code}" \
       -H "Content-Type: application/json" \
       "$(ai_litellm_api_base_url)/chat/completions" \
       -d "$payload"
@@ -3279,6 +3386,8 @@ exit 1
 }
 
 ai_litellm_context_probe_codex_native() {
+  local codex_command
+  codex_command="$(ai_litellm_harness_json codex command 2>/dev/null || printf 'codex')"
   echo "Surface: $1"
   echo "Auth:"
   if [[ -f "$HOME/.codex/auth.json" ]]; then
@@ -3288,10 +3397,18 @@ ai_litellm_context_probe_codex_native() {
   fi
   echo
   echo "Active Codex gpt-5.5 metadata:"
-  codex debug models | jq '.models[] | select(.slug=="gpt-5.5") | {slug,context_window,max_context_window,effective_context_window_percent}'
+  if command -v "$codex_command" >/dev/null 2>&1; then
+    "$codex_command" debug models | jq '.models[] | select(.slug=="gpt-5.5") | {slug,context_window,max_context_window,effective_context_window_percent}'
+  else
+    echo "  skipped: $codex_command not installed"
+  fi
   echo
   echo "Bundled Codex gpt-5.5 metadata:"
-  codex debug models --bundled | jq '.models[] | select(.slug=="gpt-5.5") | {slug,context_window,max_context_window,effective_context_window_percent}'
+  if command -v "$codex_command" >/dev/null 2>&1; then
+    "$codex_command" debug models --bundled | jq '.models[] | select(.slug=="gpt-5.5") | {slug,context_window,max_context_window,effective_context_window_percent}'
+  else
+    echo "  skipped: $codex_command not installed"
+  fi
   echo
   echo "Active native context overrides:"
   rg -n '^[[:space:]]*(model_catalog_json|model_context_window)[[:space:]]*=' "$HOME/.codex/config.toml" 2>/dev/null || echo "  none"
@@ -3480,9 +3597,11 @@ ai_litellm_context_no_long_artifacts() {
 }
 
 ai_litellm_context_codex_matches_bundled() {
-  local active bundled
-  active="$(codex debug models | jq -r '.models[] | select(.slug=="gpt-5.5") | [.context_window,.max_context_window,.effective_context_window_percent] | @tsv' 2>/dev/null)" || return 1
-  bundled="$(codex debug models --bundled | jq -r '.models[] | select(.slug=="gpt-5.5") | [.context_window,.max_context_window,.effective_context_window_percent] | @tsv' 2>/dev/null)" || return 1
+  local active bundled codex_command
+  codex_command="$(ai_litellm_harness_json codex command 2>/dev/null || printf 'codex')"
+  command -v "$codex_command" >/dev/null 2>&1 || return 0
+  active="$("$codex_command" debug models | jq -r '.models[] | select(.slug=="gpt-5.5") | [.context_window,.max_context_window,.effective_context_window_percent] | @tsv' 2>/dev/null)" || return 1
+  bundled="$("$codex_command" debug models --bundled | jq -r '.models[] | select(.slug=="gpt-5.5") | [.context_window,.max_context_window,.effective_context_window_percent] | @tsv' 2>/dev/null)" || return 1
   [[ -n "$active" && "$active" == "$bundled" ]]
 }
 
@@ -3728,6 +3847,26 @@ end
   done
 }
 
+ai_litellm_context_warn_output_clamp() {
+  ruby -ryaml -e '
+config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
+settings = config["litellm_settings"] || {}
+has_modify = settings["modify_params"] == true
+has_callback = Array(settings["callbacks"] || settings["success_callback"] || settings["failure_callback"]).any?
+shared = Array(config["model_list"]).select do |entry|
+  info = entry["model_info"] || {}
+  ctx = info["max_input_tokens"].to_i
+  out = info["max_output_tokens"].to_i
+  ctx.positive? && out.positive? && ctx == out
+end.map { |entry| entry["model_name"] }.compact.uniq
+if shared.any? && !has_modify && !has_callback
+  puts "shared-window routes have no gateway output clamp; harness reservation is the only output-reservation guard: #{shared.join(", ")}"
+end
+' "$AI_LITELLM_CONFIG" | while IFS= read -r line; do
+    [[ -n "$line" ]] && ai_litellm_context_doctor_warn "$line"
+  done
+}
+
 ai_litellm_context_descriptor_surfaces_ok() {
   [[ -d "$AI_LITELLM_HARNESSES_DIR" ]] || return 0
   node -e '
@@ -3768,6 +3907,7 @@ ai_litellm_context_doctor() {
   ai_litellm_context_warn_goose_scope
   ai_litellm_context_warn_omlx_policy_cap
   ai_litellm_context_warn_glm_output_source
+  ai_litellm_context_warn_output_clamp
   return $failed
 }
 
@@ -3932,7 +4072,7 @@ ai_litellm() {
     context)      ai_litellm_cmd_context "$@" ;;
     reasoning)    ai_litellm_cmd_reasoning "$@" ;;
     key)          ai_litellm_cmd_key "$@" ;;
-    sync|--sync)  ai_litellm_sync ;;
+    sync|--sync)  ai_litellm_sync "$@" ;;
     capabilities|--capabilities) ai_litellm_capabilities ;;
 
     # ── Deprecated flat aliases (still work; warn + delegate) ──
