@@ -137,6 +137,11 @@ default, which can interrupt active LiteLLM-backed sessions. Use
 `ai-litellm sync --dry-run` to inspect actions first, or `--no-restart` to
 regenerate without bouncing the proxy.
 
+Supported harnesses are optional on each machine. `sync`, `doctor`, and
+metadata commands must skip missing native CLIs cleanly; only launching that
+specific harness requires its native command. `sync` also ensures the isolated
+Claude Code settings file exists without touching `~/.claude`.
+
 Then test one harness:
 
 ```zsh

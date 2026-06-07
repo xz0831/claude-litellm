@@ -153,7 +153,7 @@ ai-litellm proxy logs
 ai-litellm proxy doctor
 ```
 
-`ai-litellm proxy doctor`는 running proxy가 현재 registry hash를 로드했는지 확인한다. registry를 바꾼 뒤 재기동을 잊으면 `running proxy loaded current config` 또는 `running proxy routes match config`가 실패한다. 토큰 한도를 바꾼 경우 `ai-litellm sync` 한 번이면 파생 설정 재생성과 재기동이 모두 처리된다. 재기동 없이 생성물만 갱신하려면 `ai-litellm sync --no-restart`, 변경 없이 동작 계획만 확인하려면 `ai-litellm sync --dry-run`을 쓴다.
+`ai-litellm proxy doctor`는 running proxy가 현재 registry hash를 로드했는지 확인한다. registry를 바꾼 뒤 재기동을 잊으면 `running proxy loaded current config` 또는 `running proxy routes match config`가 실패한다. 토큰 한도를 바꾼 경우 `ai-litellm sync` 한 번이면 파생 설정 재생성과 재기동이 모두 처리된다. 재기동 없이 생성물만 갱신하려면 `ai-litellm sync --no-restart`, 변경 없이 동작 계획만 확인하려면 `ai-litellm sync --dry-run`을 쓴다. `sync`는 Codex catalog/config, Claude isolated settings, OpenCode config 같은 파생물을 각 harness CLI 설치 여부와 분리해서 다룬다. 없는 native CLI는 catalog refresh나 launch에서만 skip/fail하고, metadata/doctor/config 생성은 깨지지 않아야 한다.
 
 proxy start에는 lock을 둬서 꺼진 상태에서 동시에 시작해도 중복 기동을 피한다. 단, `stop`/`restart`/`sync`는 공유 proxy를 내리므로 실행 중인 Claude/Codex LiteLLM 세션 모두에 영향을 준다.
 

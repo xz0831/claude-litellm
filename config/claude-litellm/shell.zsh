@@ -163,7 +163,7 @@ claude-litellm() {
 
   ai_litellm_model_runtime_ready "$target_model" || return $?
   ai_litellm_start >/dev/null || return $?
-  mkdir -p "$CLAUDE_LITELLM_CLAUDE_CONFIG"
+  ai_litellm_ensure_claude_settings_file "$CLAUDE_LITELLM_SETTINGS_ARG" || return $?
 
   local master_key
   master_key="$(ai_litellm_master_key)"

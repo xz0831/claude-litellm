@@ -52,6 +52,12 @@ done
 ai_litellm_model_limits GLM-5.1 >/dev/null
 budget="$(ai_litellm_harness_output_budget claude sonnet Kimi-K2.6)"
 test "$(print -r -- "$budget" | jq -r ".effectiveInput > 0 and .reservation < .capability")" = "true"
+ai_litellm_render_claude_settings claude
+claude_settings="$(ai_litellm_harness_json claude paths.settingsArg)"
+test -f "$claude_settings"
+jq empty "$claude_settings"
+test "$(stat -f %Lp "$claude_settings")" = "600"
+"$HOME/.local/bin/claude-litellm" --status >/dev/null
 ai_litellm_render_opencode_config opencode
 test "$(stat -f %Lp "$prefix/state")" = "700"
 test "$(stat -f %Lp "$prefix/state/ai-litellm")" = "700"
@@ -71,6 +77,33 @@ rmdir "$HOME/.config/ai-litellm" "$HOME/.config" 2>/dev/null || true
 ai_litellm_restart() { echo "unexpected restart" >&2; return 99; }
 sync_output="$(ai_litellm_sync --dry-run)"
 [[ "$sync_output" == *"proxy restart skipped"* ]]
+[[ "$sync_output" == *"- claude settings"* ]]
+tool_dir="$HOME/toolbin"
+mkdir -p "$tool_dir"
+for tool in node jq ruby python3 curl rg grep sed awk shasum perl mkdir chmod stat find kill sleep rmdir; do
+  tool_path="$(command -v "$tool" 2>/dev/null || true)"
+  [[ "$tool_path" == /* ]] && ln -sf "$tool_path" "$tool_dir/$tool"
+done
+old_path="$PATH"
+PATH="$tool_dir:/usr/bin:/bin:/usr/sbin:/sbin"
+for harness in claude codex goose opencode; do
+  cli="$(ai_litellm_harness_json "$harness" command)"
+  if command -v "$cli" >/dev/null 2>&1; then
+    echo "Expected $cli to be absent from restricted PATH" >&2
+    exit 1
+  fi
+  info="$(ai_litellm_harness_info "$harness")"
+  [[ "$info" == *"Status:    ok"* ]]
+  [[ "$info" == *"CLI:       not installed"* ]]
+done
+ai_litellm_doctor_harnesses >/dev/null
+restricted_sync_output="$(ai_litellm_sync --dry-run)"
+[[ "$restricted_sync_output" == *"codex catalog skipped"* ]]
+[[ "$restricted_sync_output" == *"- codex config"* ]]
+[[ "$restricted_sync_output" == *"- claude settings"* ]]
+[[ "$restricted_sync_output" == *"- opencode config"* ]]
+[[ "$restricted_sync_output" == *"proxy restart skipped"* ]]
+PATH="$old_path"
 test ! -e "$HOME/litellm_config.yaml"
 test ! -e "$HOME/.config/ai-litellm"
 test ! -e "$HOME/.config/claude-litellm"

@@ -683,6 +683,45 @@ ai_litellm_harness_exec_env() {
   "${env_args[@]}" "$@"
 }
 
+ai_litellm_ensure_claude_settings_file() {
+  local settings_path="$1"
+  [[ -n "$settings_path" ]] || {
+    echo "Missing Claude settings path." >&2
+    return 1
+  }
+
+  local settings_dir tmp
+  settings_dir="${settings_path:h}"
+  mkdir -p "$settings_dir" || return 1
+
+  if [[ -f "$settings_path" ]]; then
+    jq empty "$settings_path" >/dev/null || {
+      echo "Invalid Claude LiteLLM settings JSON: $settings_path" >&2
+      return 1
+    }
+    chmod 600 "$settings_path" 2>/dev/null || true
+    return 0
+  fi
+
+  tmp="${settings_path}.$$"
+  {
+    print -r -- "{"
+    print -r -- "}"
+  } >| "$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv "$tmp" "$settings_path"
+}
+
+ai_litellm_render_claude_settings() {
+  local harness="${1:-claude}"
+  local settings_path
+  settings_path="$(ai_litellm_harness_json "$harness" paths.settingsArg)" || return 1
+  ai_litellm_ensure_claude_settings_file "$settings_path"
+}
+
 ai_litellm_cli_arg_present() {
   local wanted="$1"
   shift
@@ -2035,6 +2074,13 @@ ai_litellm_sync() {
     echo "- codex catalog/config skipped ($codex_wrapper not installed)"
   fi
 
+  if ai_litellm_harness_descriptor claude >/dev/null 2>&1; then
+    echo "- claude settings"
+    if (( ! dry_run )); then
+      ai_litellm_render_claude_settings claude || failed=1
+    fi
+  fi
+
   if ai_litellm_harness_descriptor opencode >/dev/null 2>&1; then
     echo "- opencode config"
     if (( ! dry_run )); then
@@ -2049,7 +2095,7 @@ ai_litellm_sync() {
     echo "- proxy restart skipped"
   fi
 
-  echo "- claude/goose derive limits at next launch (no regeneration needed)"
+  echo "- claude/goose output limits derive at next launch"
   return $failed
 }
 
