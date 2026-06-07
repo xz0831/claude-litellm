@@ -250,8 +250,8 @@ const pick = (candidates) => {
 
 const context = positiveInt(limits.context);
 const capability = positiveInt(limits.output);
-const headroom = positiveInt(policy.tokenizerHeadroom) ?? 0;
-const minimumInput = positiveInt(policy.minimumInput) ?? 32768;
+const configuredHeadroom = positiveInt(policy.tokenizerHeadroom) ?? 0;
+const configuredMinimumInput = positiveInt(policy.minimumInput) ?? 32768;
 let chosen = pick([
   [`adapterConfig.outputReservation.perSelection.${selection}`, policy.perSelection?.[selection]],
   [`adapterConfig.outputReservation.perTier.${selection}`, policy.perTier?.[selection]],
@@ -270,14 +270,19 @@ if (capability != null && reservation > capability) {
   reservation = capability;
   source += "+capabilityClamp";
 }
+let headroom = configuredHeadroom;
+let minimumInput = configuredMinimumInput;
 if (context != null) {
+  headroom = Math.min(headroom, Math.floor(context * 0.1));
+  minimumInput = Math.min(minimumInput, Math.max(1, Math.floor(context * 0.5)));
   const maxReservationForMinimumInput = context - headroom - minimumInput;
-  if (maxReservationForMinimumInput >= 1 && reservation > maxReservationForMinimumInput) {
+  if (maxReservationForMinimumInput < 1) {
+    reservation = 1;
+    headroom = Math.max(0, context - minimumInput - reservation);
+    source += "+tinyWindowClamp";
+  } else if (reservation > maxReservationForMinimumInput) {
     reservation = maxReservationForMinimumInput;
     source += "+minimumInputClamp";
-  } else if (maxReservationForMinimumInput < 1 && reservation > Math.max(0, context - headroom)) {
-    reservation = Math.max(0, context - headroom);
-    source += "+windowClamp";
   }
 }
 
@@ -474,11 +479,18 @@ ai_litellm_harness_env_assignments() {
 
   # Derive per-model token limits from the single source so descriptors can
   # reference {{limits.context}} / {{limits.output}} in adapterConfig.env.
-  local model_limits ctx_limit out_limit
+  local model_limits ctx_limit out_limit output_budget reservation_output reservation_effective reservation_headroom reservation_minimum
   model_limits="$(ai_litellm_model_limits "$model_name" 2>/dev/null || true)"
   if [[ -n "$model_limits" ]]; then
     ctx_limit="$(print -r -- "$model_limits" | jq -r '.context // empty')"
     out_limit="$(print -r -- "$model_limits" | jq -r '.output // empty')"
+  fi
+  output_budget="$(ai_litellm_harness_output_budget "$harness" "$model_name" "$model_name" 2>/dev/null || true)"
+  if [[ -n "$output_budget" ]]; then
+    reservation_output="$(print -r -- "$output_budget" | jq -r '.reservation // empty')"
+    reservation_effective="$(print -r -- "$output_budget" | jq -r '.effectiveInput // empty')"
+    reservation_headroom="$(print -r -- "$output_budget" | jq -r '.tokenizerHeadroom // empty')"
+    reservation_minimum="$(print -r -- "$output_budget" | jq -r '.minimumInput // empty')"
   fi
 
   node -e '
@@ -489,6 +501,10 @@ const baseUrl = process.argv[3];
 const apiBaseUrl = process.argv[4];
 const ctxLimit = process.argv[5] || "";
 const outLimit = process.argv[6] || "";
+const reservationOutput = process.argv[7] || "";
+const reservationEffective = process.argv[8] || "";
+const reservationHeadroom = process.argv[9] || "";
+const reservationMinimum = process.argv[10] || "";
 const paths = descriptor.paths || {};
 const provider = descriptor.provider || {};
 const providerBaseUrl = String(provider.baseUrl || "")
@@ -503,6 +519,10 @@ const replacements = new Map([
   ["{{provider.basePath}}", String(provider.basePath || "")],
   ["{{limits.context}}", ctxLimit],
   ["{{limits.output}}", outLimit],
+  ["{{reservation.output}}", reservationOutput],
+  ["{{reservation.effectiveInput}}", reservationEffective],
+  ["{{reservation.headroom}}", reservationHeadroom],
+  ["{{reservation.minimumInput}}", reservationMinimum],
 ]);
 for (const [key, value] of Object.entries(paths)) {
   replacements.set(`{{paths.${key}}}`, String(value));
@@ -521,7 +541,7 @@ for (const [key, value] of Object.entries(descriptor.adapterConfig?.env || {})) 
   if (rendered === "") continue;
   console.log(`${key}\t${rendered}`);
 }
-' "$descriptor" "$model_name" "$(ai_litellm_base_url)" "$(ai_litellm_api_base_url)" "$ctx_limit" "$out_limit"
+' "$descriptor" "$model_name" "$(ai_litellm_base_url)" "$(ai_litellm_api_base_url)" "$ctx_limit" "$out_limit" "$reservation_output" "$reservation_effective" "$reservation_headroom" "$reservation_minimum"
 }
 
 # Distinct os.environ/<VAR> references in the registry. Drives generic
@@ -842,6 +862,11 @@ ai_litellm_launch_opencode() {
     auth_secret="$(ai_litellm_harness_secret_value "$auth_source")" || return $?
     env_assignments+=("$auth_env=$auth_secret")
   fi
+
+  local key value
+  while IFS=$'\t' read -r key value; do
+    [[ -n "$key" ]] && env_assignments+=("$key=$value")
+  done < <(ai_litellm_harness_env_assignments "$harness" "$model")
 
   isolation_env="$(ai_litellm_harness_json "$harness" isolation.env 2>/dev/null || printf 'OPENCODE_CONFIG')"
   config_path="$(ai_litellm_harness_json "$harness" paths.config)"
@@ -2062,7 +2087,7 @@ ai_litellm_doctor() {
   ai_litellm_doctor_check "Codex shortcuts do not shadow subcommands" ai_litellm_doctor_shortcuts || failed=1
   ai_litellm_doctor_check "local model routes are unique" ai_litellm_doctor_local_route_uniqueness || failed=1
   ai_litellm_doctor_check "harness configs match single-source limits" ai_litellm_doctor_limit_sync || failed=1
-  ai_litellm_doctor_check "Claude output reservations leave input budget" ai_litellm_context_claude_reservations_ok || failed=1
+  ai_litellm_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
   ai_litellm_doctor_check "harness reasoning configs match descriptors" ai_litellm_doctor_reasoning_sync || failed=1
   ai_litellm_doctor_reasoning_capability_truth
   ai_litellm_doctor_runtimes || failed=1
@@ -3039,22 +3064,27 @@ def output_budget(descriptor, selection, model, ctx, out)
   return nil unless pick || capability
 
   source, reservation = pick || ["capability-clamped-default", [capability, 32000].compact.min]
-  headroom = positive_int(policy["tokenizerHeadroom"]) || 0
-  minimum_input = positive_int(policy["minimumInput"]) || 32768
+  configured_headroom = positive_int(policy["tokenizerHeadroom"]) || 0
+  configured_minimum_input = positive_int(policy["minimumInput"]) || 32768
   context = positive_int(ctx)
+  headroom = configured_headroom
+  minimum_input = configured_minimum_input
 
   if capability && reservation > capability
     reservation = capability
     source += "+capabilityClamp"
   end
   if context
+    headroom = [headroom, (context * 0.1).floor].min
+    minimum_input = [minimum_input, [1, (context * 0.5).floor].max].min
     max_reservation_for_minimum_input = context - headroom - minimum_input
-    if max_reservation_for_minimum_input >= 1 && reservation > max_reservation_for_minimum_input
+    if max_reservation_for_minimum_input < 1
+      reservation = 1
+      headroom = [0, context - minimum_input - reservation].max
+      source += "+tinyWindowClamp"
+    elsif reservation > max_reservation_for_minimum_input
       reservation = max_reservation_for_minimum_input
       source += "+minimumInputClamp"
-    elsif max_reservation_for_minimum_input < 1 && reservation > [0, context - headroom].max
-      reservation = [0, context - headroom].max
-      source += "+windowClamp"
     end
   end
 
@@ -3498,10 +3528,117 @@ ai_litellm_context_claude_reservations_ok() {
   return $failed
 }
 
+ai_litellm_context_harness_reservations_ok() {
+  [[ -d "$AI_LITELLM_HARNESSES_DIR" ]] || return 0
+  ruby -rjson -ryaml -e '
+config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
+harness_dir = ARGV[1]
+registry = {}
+Array(config["model_list"]).each { |e| registry[e["model_name"]] = e if e["model_name"] }
+
+def read_json(path)
+  JSON.parse(File.read(path))
+rescue
+  {}
+end
+
+def positive_int(value)
+  n = Integer(value)
+  n.positive? ? n : nil
+rescue
+  nil
+end
+
+def selections(descriptor, registry)
+  models = descriptor["models"] || {}
+  settings = read_json(descriptor.dig("paths", "settings"))
+  aliases = settings["aliases"] || {}
+  out = []
+  if models["mode"] == "tier-aliases"
+    tiers = Array(models["tiers"])
+    default = settings["default"] || tiers.first
+    out << [default, aliases[default] || default] if default
+    tiers.each { |tier| out << [tier, aliases[tier]] if aliases[tier] }
+  else
+    out << ["default", models["default"]] if models["default"]
+    out << ["small", models["small"]] if models["small"]
+    Array(aliases.values).uniq.each { |model| out << [model, model] if model }
+    Array(models["localCatalogEntries"]).each do |entry|
+      model = entry["slug"]
+      out << [model, model] if model
+    end
+  end
+  out.uniq.select { |_selection, model| model && registry.key?(model) }
+end
+
+def output_budget(policy, selection, model, ctx, out)
+  pick = nil
+  [
+    ["perSelection.#{selection}", policy.dig("perSelection", selection)],
+    ["perTier.#{selection}", policy.dig("perTier", selection)],
+    ["perModel.#{model}", policy.dig("perModel", model)],
+    ["default", policy["default"]]
+  ].each do |source, value|
+    n = positive_int(value)
+    if n
+      pick = [source, n]
+      break
+    end
+  end
+  capability = positive_int(out)
+  return nil unless pick || capability
+  source, reservation = pick || ["capability-clamped-default", [capability, 32000].compact.min]
+  context = positive_int(ctx)
+  headroom = positive_int(policy["tokenizerHeadroom"]) || 0
+  minimum_input = positive_int(policy["minimumInput"]) || 32768
+  reservation = capability if capability && reservation > capability
+  if context
+    headroom = [headroom, (context * 0.1).floor].min
+    minimum_input = [minimum_input, [1, (context * 0.5).floor].max].min
+    max_reservation = context - headroom - minimum_input
+    if max_reservation < 1
+      reservation = 1
+      headroom = [0, context - minimum_input - reservation].max
+    elsif reservation > max_reservation
+      reservation = max_reservation
+    end
+  end
+  effective = context ? [0, context - reservation - headroom].max : nil
+  {reservation: reservation, effective: effective, minimum: minimum_input, context: context, headroom: headroom, capability: capability}
+end
+
+errors = []
+Dir[File.join(harness_dir, "*.json")].sort.each do |path|
+  next if File.basename(path) == "schema.json"
+  descriptor = read_json(path)
+  policy = descriptor.dig("adapterConfig", "outputReservation") || {}
+  next if policy.empty?
+  harness = descriptor["name"] || File.basename(path, ".json")
+  selections(descriptor, registry).each do |selection, model|
+    mi = registry.dig(model, "model_info") || {}
+    budget = output_budget(policy, selection, model, mi["max_input_tokens"], mi["max_output_tokens"])
+    if budget.nil? || budget[:reservation].to_i <= 0
+      errors << "#{harness}/#{selection}->#{model}: reservation missing or non-positive"
+      next
+    end
+    if budget[:effective].to_i < budget[:minimum].to_i
+      errors << "#{harness}/#{selection}->#{model}: effective_input=#{budget[:effective]} minimum=#{budget[:minimum]} context=#{budget[:context]} reservation=#{budget[:reservation]} headroom=#{budget[:headroom]} capability=#{budget[:capability]}"
+    end
+  end
+end
+
+if errors.any?
+  errors.each { |e| warn e }
+  exit 1
+end
+' "$AI_LITELLM_CONFIG" "$AI_LITELLM_HARNESSES_DIR"
+}
+
 ai_litellm_context_warn_opencode_output_cap() {
   local config
   config="$(ai_litellm_harness_json opencode paths.config 2>/dev/null || true)"
   [[ -n "$config" && -f "$config" ]] || return 0
+  ai_litellm_harness_json opencode adapterConfig.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX >/dev/null 2>&1 && return 0
   node -e '
 const fs = require("fs");
 const cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -3525,8 +3662,8 @@ ai_litellm_context_warn_goose_scope() {
 const fs = require("fs");
 const d = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 const env = d.adapterConfig?.env || {};
-if (env.GOOSE_CONTEXT_LIMIT && !env.GOOSE_PLANNER_CONTEXT_LIMIT && !env.GOOSE_LEAD_CONTEXT_LIMIT && !env.GOOSE_WORKER_CONTEXT_LIMIT) {
-  console.log("Goose descriptor injects only GOOSE_CONTEXT_LIMIT; role-specific planner/lead/worker limits are not configured.");
+if (env.GOOSE_CONTEXT_LIMIT && !env.GOOSE_MAX_TOKENS) {
+  console.log("Goose descriptor injects context without GOOSE_MAX_TOKENS output reservation.");
 }
 ' "$descriptor" | while IFS= read -r line; do
     [[ -n "$line" ]] && ai_litellm_context_doctor_warn "$line"
@@ -3612,7 +3749,7 @@ ai_litellm_context_doctor() {
   ai_litellm_context_doctor_check "LiteLLM pre-call context enforcement enabled" ai_litellm_context_pre_call_enabled || failed=1
   ai_litellm_context_doctor_check "harness context surfaces are unique" ai_litellm_context_descriptor_surfaces_ok || failed=1
   ai_litellm_context_doctor_check "harness configs match single-source limits" ai_litellm_doctor_limit_sync || failed=1
-  ai_litellm_context_doctor_check "Claude output reservations leave input budget" ai_litellm_context_claude_reservations_ok || failed=1
+  ai_litellm_context_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
   ai_litellm_context_doctor_check "context matrix renders" ai_litellm_quiet ai_litellm_context_matrix || failed=1
   ai_litellm_context_warn_opencode_output_cap
   ai_litellm_context_warn_goose_scope

@@ -34,7 +34,8 @@
       "GOOSE_PROVIDER",
       "GOOSE_MODEL",
       "LITELLM_HOST",
-      "LITELLM_BASE_PATH"
+      "LITELLM_BASE_PATH",
+      "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"
     ]
   },
   "provider": {
@@ -58,6 +59,14 @@
     "xdgDataEnv": "XDG_DATA_HOME",
     "xdgCacheEnv": "XDG_CACHE_HOME",
     "xdgStateEnv": "XDG_STATE_HOME",
+    "env": {
+      "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "{{reservation.output}}"
+    },
+    "outputReservation": {
+      "default": 32000,
+      "tokenizerHeadroom": 8192,
+      "minimumInput": 32768
+    },
     "enabledProviders": [
       "litellm"
     ],

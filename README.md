@@ -118,20 +118,23 @@ Model capability and request reservation are separate concepts.
   `model_info`.
 - Harness-specific reservation lives in the harness descriptor when needed.
 
-Claude Code currently needs explicit output reservation handling because it can
-send `CLAUDE_CODE_MAX_OUTPUT_TOKENS` as a per-request `max_tokens` reservation.
+Some harnesses need explicit output reservation handling because they send or
+infer per-request `max_tokens` values:
+
+- Claude Code: `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
+- goose: `GOOSE_MAX_TOKENS`
+- OpenCode: `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` for the custom
+  OpenAI-compatible provider ceiling
+
 For shared-window providers, the effective input budget is:
 
 ```text
 effective_input = max_input_tokens - output_reservation - tokenizer_headroom
 ```
 
-Other harnesses can still have token-limit issues, but the failure mode differs:
+Other token-limit issues can still happen, but the failure mode differs:
 
 - Codex LiteLLM: generated model catalog/config can drift from `x-limits`.
-- OpenCode LiteLLM: `limit.output` may be clamped by the installed CLI/runtime.
-- goose LiteLLM: only the generic context env may be injected unless role-specific
-  limits are configured.
 - LiteLLM proxy: `enable_pre_call_checks` enforces configured input limits, not
   every provider-specific reserved-output accounting rule.
 

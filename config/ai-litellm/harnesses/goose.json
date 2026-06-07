@@ -27,7 +27,8 @@
       "CLAUDE_CONFIG_DIR",
       "OPENCODE_CONFIG",
       "OPENCODE_CONFIG_DIR",
-      "GOOSE_CONTEXT_LIMIT"
+      "GOOSE_CONTEXT_LIMIT",
+      "GOOSE_MAX_TOKENS"
     ]
   },
   "provider": {
@@ -48,10 +49,16 @@
     "env": {
       "GOOSE_PROVIDER": "litellm",
       "GOOSE_MODEL": "{{model}}",
-      "GOOSE_CONTEXT_LIMIT": "{{limits.context}}",
+      "GOOSE_CONTEXT_LIMIT": "{{reservation.effectiveInput}}",
+      "GOOSE_MAX_TOKENS": "{{reservation.output}}",
       "LITELLM_HOST": "{{provider.baseUrl}}",
       "LITELLM_BASE_PATH": "{{provider.basePath}}",
       "GOOSE_DISABLE_SESSION_NAMING": "true"
+    },
+    "outputReservation": {
+      "default": 32000,
+      "tokenizerHeadroom": 8192,
+      "minimumInput": 32768
     },
     "reasoning": {
       "control": "none",
