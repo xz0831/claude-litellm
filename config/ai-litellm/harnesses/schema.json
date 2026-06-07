@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ai-litellm harness descriptor",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "name",
+    "adapter",
+    "command",
+    "paths",
+    "isolation"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "adapter": {
+      "type": "string",
+      "enum": [
+        "claude-code",
+        "codex-cli",
+        "env-injector",
+        "opencode-cli"
+      ]
+    },
+    "command": {
+      "type": "string"
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "required": [
+        "kind",
+        "env"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "env": {
+          "type": "string"
+        },
+        "scrubEnv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "provider": {
+      "type": "object"
+    },
+    "models": {
+      "type": "object"
+    },
+    "adapterConfig": {
+      "type": "object"
+    }
+  }
+}

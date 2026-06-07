@@ -1,0 +1,13 @@
+{
+  "default": "opus",
+  "aliases": {
+    "opus": "DeepSeek-V4-Pro",
+    "sonnet": "Kimi-K2.6",
+    "haiku": "GLM-5.1"
+  },
+  "displayNames": {
+    "opus": "DeepSeek via LiteLLM",
+    "sonnet": "Kimi via LiteLLM",
+    "haiku": "GLM via LiteLLM"
+  }
+}

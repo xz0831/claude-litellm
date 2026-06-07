@@ -1,0 +1,21 @@
+#!/usr/bin/env zsh
+
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+  source "$NVM_DIR/nvm.sh"
+fi
+
+if [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
+  source "$HOME/.config/ai-litellm/lib.zsh"
+fi
+
+if [[ -f "$HOME/.config/codex-litellm/shell.zsh" ]]; then
+  source "$HOME/.config/codex-litellm/shell.zsh"
+fi
+
+if ! typeset -f codex-litellm >/dev/null 2>&1; then
+  echo "codex-litellm shell helper is not available" >&2
+  exit 1
+fi
+
+codex-litellm "$@"

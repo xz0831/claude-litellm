@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "name": "claude",
+  "displayName": "Claude Code via LiteLLM",
+  "adapter": "claude-code",
+  "command": "claude",
+  "paths": {
+    "home": "__HOME__/.config/claude-litellm",
+    "settings": "__HOME__/.config/claude-litellm/settings.json",
+    "configDir": "__HOME__/.config/claude-litellm/claude-config",
+    "settingsArg": "__HOME__/.config/claude-litellm/claude-config/settings.json"
+  },
+  "isolation": {
+    "kind": "env-dir-var",
+    "env": "CLAUDE_CONFIG_DIR",
+    "scrubEnv": [
+      "CODEX_HOME",
+      "OPENROUTER_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENAI_API_BASE",
+      "OPENAI_BASE_URL",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_AUTH_TOKEN",
+      "GOOGLE_API_KEY",
+      "GEMINI_API_KEY",
+      "OLLAMA_HOST",
+      "LITELLM_API_KEY",
+      "LITELLM_MASTER_KEY"
+    ]
+  },
+  "provider": {
+    "baseUrl": "{{ai.baseUrl}}",
+    "auth": {
+      "mode": "env-value",
+      "env": "ANTHROPIC_AUTH_TOKEN",
+      "source": "litellm-master-key"
+    }
+  },
+  "models": {
+    "mode": "tier-aliases",
+    "tiers": [
+      "opus",
+      "sonnet",
+      "haiku"
+    ]
+  },
+  "adapterConfig": {
+    "discoveryEnv": "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+    "baseUrlEnv": "ANTHROPIC_BASE_URL",
+    "tierModelEnvPrefix": "ANTHROPIC_DEFAULT",
+    "tierDisplayNameEnvPrefix": "ANTHROPIC_DEFAULT",
+    "autoCompactWindowEnv": "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    "maxOutputTokensEnv": "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "outputReservation": {
+      "default": 32000,
+      "tokenizerHeadroom": 8192,
+      "minimumInput": 32768
+    },
+    "reasoning": {
+      "control": "intent",
+      "source": "claude-code-effort",
+      "effort": "auto",
+      "wire": "tier/model+optional-cli-flag:--effort",
+      "confidence": "inferred",
+      "notes": "Claude Code tier selection can affect effort defaults; explicit efforts are passed with --effort."
+    },
+    "context": {
+      "surface": "claude-litellm",
+      "budgetKind": "compact-threshold+router",
+      "authLane": "litellm-master-key",
+      "confidence": "local-config"
+    }
+  }
+}

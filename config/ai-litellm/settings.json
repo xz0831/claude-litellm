@@ -1,0 +1,25 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4000
+  },
+  "logs": {
+    "tail": 120
+  },
+  "runtimes": {
+    "omlx": {
+      "kind": "openai-compatible",
+      "baseUrl": "http://127.0.0.1:8000",
+      "apiBase": "http://127.0.0.1:8000/v1",
+      "modelsDir": "__HOME__/.omlx/models",
+      "modelPrefix": "local-omlx-",
+      "startCommand": "omlx start",
+      "startCommandBinary": "omlx",
+      "stopCommand": "omlx stop",
+      "expectedModels": [
+        "local-omlx-gemma4-12b"
+      ],
+      "managedBy": "user"
+    }
+  }
+}

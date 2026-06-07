@@ -1,0 +1,25 @@
+.DS_Store
+
+# Runtime state. These are created under ~/.config at install/run time, not kept
+# in this repository.
+*.log
+*.pid
+*.started_at
+*.sha256
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+history.jsonl
+sessions/
+cache/
+state/
+backups/
+claude-config/
+codex-home/
+opencode-dir/node_modules/
+
+# Local scratch.
+.tmp/

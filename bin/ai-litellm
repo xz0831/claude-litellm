@@ -1,0 +1,17 @@
+#!/usr/bin/env zsh
+
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+  source "$NVM_DIR/nvm.sh"
+fi
+
+if [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
+  source "$HOME/.config/ai-litellm/lib.zsh"
+fi
+
+if ! typeset -f ai_litellm >/dev/null 2>&1; then
+  echo "ai-litellm shared library is not available" >&2
+  exit 1
+fi
+
+ai_litellm "$@"

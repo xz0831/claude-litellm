@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "name": "opencode",
+  "displayName": "OpenCode via LiteLLM",
+  "adapter": "opencode-cli",
+  "command": "opencode",
+  "paths": {
+    "home": "__HOME__/.config/opencode-litellm",
+    "config": "__HOME__/.config/opencode-litellm/opencode.json",
+    "configDir": "__HOME__/.config/opencode-litellm/opencode-dir",
+    "dataHome": "__HOME__/.config/opencode-litellm/data",
+    "cacheHome": "__HOME__/.config/opencode-litellm/cache",
+    "stateHome": "__HOME__/.config/opencode-litellm/state"
+  },
+  "isolation": {
+    "kind": "env-file-var",
+    "env": "OPENCODE_CONFIG",
+    "scrubEnv": [
+      "OPENROUTER_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENAI_API_BASE",
+      "OPENAI_BASE_URL",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_AUTH_TOKEN",
+      "GOOGLE_API_KEY",
+      "GEMINI_API_KEY",
+      "OLLAMA_HOST",
+      "LITELLM_API_KEY",
+      "LITELLM_MASTER_KEY",
+      "CODEX_HOME",
+      "CLAUDE_CONFIG_DIR",
+      "GOOSE_PATH_ROOT",
+      "GOOSE_PROVIDER",
+      "GOOSE_MODEL",
+      "LITELLM_HOST",
+      "LITELLM_BASE_PATH"
+    ]
+  },
+  "provider": {
+    "name": "litellm",
+    "displayName": "LiteLLM",
+    "baseUrl": "{{ai.apiBaseUrl}}",
+    "auth": {
+      "mode": "env-value",
+      "env": "LITELLM_MASTER_KEY",
+      "source": "litellm-master-key"
+    }
+  },
+  "models": {
+    "default": "gpt-5.4",
+    "small": "gpt-5.4-mini"
+  },
+  "adapterConfig": {
+    "providerNpm": "@ai-sdk/openai-compatible",
+    "configEnv": "OPENCODE_CONFIG",
+    "configDirEnv": "OPENCODE_CONFIG_DIR",
+    "xdgDataEnv": "XDG_DATA_HOME",
+    "xdgCacheEnv": "XDG_CACHE_HOME",
+    "xdgStateEnv": "XDG_STATE_HOME",
+    "enabledProviders": [
+      "litellm"
+    ],
+    "reasoning": {
+      "control": "none",
+      "source": "none",
+      "wire": "provider-default",
+      "confidence": "unknown"
+    },
+    "context": {
+      "surface": "opencode-litellm",
+      "budgetKind": "harness-metadata+router",
+      "authLane": "litellm-master-key",
+      "confidence": "local-config"
+    },
+    "subcommands": [
+      "run",
+      "models",
+      "auth",
+      "agent",
+      "attach",
+      "github",
+      "mcp",
+      "serve",
+      "session",
+      "stats",
+      "export",
+      "import",
+      "web",
+      "acp",
+      "plugin",
+      "pr",
+      "db",
+      "debug",
+      "upgrade",
+      "uninstall",
+      "help"
+    ]
+  }
+}
