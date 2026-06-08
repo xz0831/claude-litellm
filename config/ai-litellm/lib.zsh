@@ -1582,6 +1582,7 @@ ai_litellm_start() {
     LITELLM_MASTER_KEY="$master_key" \
     AI_LITELLM_HOST="$(ai_litellm_host)" \
     AI_LITELLM_PORT="$(ai_litellm_port)" \
+    PYTHONPATH="$AI_LITELLM_CONFIG_HOME${PYTHONPATH:+:$PYTHONPATH}" \
     env "${extra_env[@]}" python3 - <<'PY'
 import os
 import subprocess
@@ -2325,6 +2326,8 @@ ai_litellm_doctor() {
   ai_litellm_doctor_check "OpenCode generated config follows ai-litellm base URL" ai_litellm_doctor_opencode_config_base_url || failed=1
   ai_litellm_doctor_check "Codex shortcuts do not shadow subcommands" ai_litellm_doctor_shortcuts || failed=1
   ai_litellm_doctor_check "local model routes are unique" ai_litellm_doctor_local_route_uniqueness || failed=1
+  ai_litellm_doctor_check "gateway output clamp policy valid" ai_litellm_context_gateway_clamp_policy_ok || failed=1
+  ai_litellm_doctor_check "gateway output clamp configured" ai_litellm_context_gateway_clamp_configured || failed=1
   ai_litellm_doctor_check "harness configs match single-source limits" ai_litellm_doctor_limit_sync || failed=1
   ai_litellm_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
   ai_litellm_doctor_check "harness reasoning configs match descriptors" ai_litellm_doctor_reasoning_sync || failed=1
@@ -3730,6 +3733,63 @@ exit(config.dig("router_settings", "enable_pre_call_checks") == true ? 0 : 1)
 ' "$AI_LITELLM_CONFIG"
 }
 
+ai_litellm_context_gateway_clamp_policy_ok() {
+  ruby -ryaml -e '
+config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
+policy = config["x-gateway-output-clamp"] || {}
+errors = []
+if policy["enabled"] == false
+  errors << "x-gateway-output-clamp.enabled must stay true for production C4"
+end
+%w[default tokenizer_headroom minimum_input].each do |key|
+  value = policy[key]
+  errors << "x-gateway-output-clamp.#{key} must be a positive integer" unless value.is_a?(Integer) && value.positive?
+end
+per_model = policy["perModel"] || policy["per_model"] || {}
+unless per_model.is_a?(Hash)
+  errors << "x-gateway-output-clamp.perModel must be an object when present"
+else
+  per_model.each do |model, value|
+    errors << "x-gateway-output-clamp.perModel.#{model} must be a positive integer" unless value.is_a?(Integer) && value.positive?
+  end
+end
+if errors.any?
+  warn errors.join("\n")
+  exit 1
+end
+' "$AI_LITELLM_CONFIG"
+}
+
+ai_litellm_context_gateway_clamp_configured() {
+  ruby -ryaml -e '
+config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
+settings = config["litellm_settings"] || {}
+callbacks = Array(settings["callbacks"])
+has_hook = callbacks.include?("ai_litellm_callbacks.output_clamp.proxy_handler_instance")
+enabled = (config.dig("x-gateway-output-clamp", "enabled") != false)
+exit(has_hook && enabled ? 0 : 1)
+' "$AI_LITELLM_CONFIG"
+}
+
+ai_litellm_model_info_anchor_refs_ok() {
+  ruby -e '
+text = File.read(ARGV[0])
+entries = text.split(/\n(?=  - model_name:\s*)/)
+errors = []
+entries.each do |entry|
+  next unless entry =~ /^\s+- model_name:\s*(.+?)\s*$/
+  name = Regexp.last_match(1)
+  unless entry =~ /^\s+model_info:\s*\*[A-Za-z0-9_]+\s*$/
+    errors << "#{name}: model_info must reference an x-limits YAML anchor"
+  end
+end
+if errors.any?
+  warn errors.join("\n")
+  exit 1
+end
+' "$AI_LITELLM_CONFIG"
+}
+
 ai_litellm_context_claude_reservations_ok() {
   ai_litellm_harness_descriptor claude >/dev/null 2>&1 || return 0
   [[ "$(ai_litellm_harness_json claude adapter 2>/dev/null || true)" == "claude-code" ]] || return 0
@@ -3966,18 +4026,16 @@ end
 }
 
 ai_litellm_context_warn_output_clamp() {
+  ai_litellm_context_gateway_clamp_configured >/dev/null 2>&1 && return 0
   ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
-settings = config["litellm_settings"] || {}
-has_modify = settings["modify_params"] == true
-has_callback = Array(settings["callbacks"] || settings["success_callback"] || settings["failure_callback"]).any?
 shared = Array(config["model_list"]).select do |entry|
   info = entry["model_info"] || {}
   ctx = info["max_input_tokens"].to_i
   out = info["max_output_tokens"].to_i
   ctx.positive? && out.positive? && ctx == out
 end.map { |entry| entry["model_name"] }.compact.uniq
-if shared.any? && !has_modify && !has_callback
+if shared.any?
   puts "shared-window routes have no gateway output clamp; harness reservation is the only output-reservation guard: #{shared.join(", ")}"
 end
 ' "$AI_LITELLM_CONFIG" | while IFS= read -r line; do
@@ -4017,6 +4075,8 @@ ai_litellm_context_doctor() {
   ai_litellm_context_doctor_check "native Codex long-context artifacts are not active" ai_litellm_context_no_long_artifacts || failed=1
   ai_litellm_context_doctor_check "native Codex active gpt-5.5 catalog matches bundled catalog" ai_litellm_context_codex_matches_bundled || failed=1
   ai_litellm_context_doctor_check "LiteLLM pre-call context enforcement enabled" ai_litellm_context_pre_call_enabled || failed=1
+  ai_litellm_context_doctor_check "gateway output clamp policy valid" ai_litellm_context_gateway_clamp_policy_ok || failed=1
+  ai_litellm_context_doctor_check "gateway output clamp configured" ai_litellm_context_gateway_clamp_configured || failed=1
   ai_litellm_context_doctor_check "harness context surfaces are unique" ai_litellm_context_descriptor_surfaces_ok || failed=1
   ai_litellm_context_doctor_check "harness configs match single-source limits" ai_litellm_doctor_limit_sync || failed=1
   ai_litellm_context_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
@@ -4138,6 +4198,32 @@ ai_litellm_reasoning_doctor() {
   return $failed
 }
 
+ai_litellm_model_policy_audit() {
+  local failed=0
+  echo "ai-litellm model policy audit"
+  ai_litellm_doctor_check "model limits render" ai_litellm_quiet ai_litellm_limits_table || failed=1
+  ai_litellm_doctor_check "model_info uses x-limits anchors" ai_litellm_model_info_anchor_refs_ok || failed=1
+  ai_litellm_doctor_check "LiteLLM pre-call context enforcement enabled" ai_litellm_context_pre_call_enabled || failed=1
+  ai_litellm_doctor_check "gateway output clamp policy valid" ai_litellm_context_gateway_clamp_policy_ok || failed=1
+  ai_litellm_doctor_check "gateway output clamp configured" ai_litellm_context_gateway_clamp_configured || failed=1
+  ai_litellm_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
+  ai_litellm_doctor_check "harness configs match single-source limits" ai_litellm_doctor_limit_sync || failed=1
+  ai_litellm_doctor_check "context matrix renders" ai_litellm_quiet ai_litellm_context_matrix || failed=1
+  ai_litellm_doctor_check "reasoning matrix renders" ai_litellm_quiet ai_litellm_model_reasoning_table || failed=1
+  ai_litellm_context_warn_omlx_policy_cap
+  ai_litellm_context_warn_glm_output_source
+  ai_litellm_context_warn_output_clamp
+  return $failed
+}
+
+ai_litellm_cmd_audit() {
+  local verb="$1"; [[ $# -gt 0 ]] && shift
+  case "$verb" in
+    model-policy|"") ai_litellm_model_policy_audit "$@" ;;
+    *) echo "Usage: ai-litellm audit model-policy" >&2; return 1 ;;
+  esac
+}
+
 ai_litellm_cmd_reasoning() {
   local verb="$1"; [[ $# -gt 0 ]] && shift
   case "$verb" in
@@ -4167,6 +4253,7 @@ Usage: ai-litellm <group> <verb> [args]
   Route:    ai-litellm route list|info [model]|probe <model...>|check [model...]
   Context:  ai-litellm context matrix [filter]|probe <surface|all>|doctor
   Reason:   ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
+  Audit:    ai-litellm audit model-policy
   Key:      ai-litellm key status
   Sync:     ai-litellm sync          Regenerate derived configs + reload proxy from the single source
   Caps:     ai-litellm capabilities  Proxy + runtime capability summary
@@ -4189,6 +4276,7 @@ ai_litellm() {
     route)        ai_litellm_cmd_route "$@" ;;
     context)      ai_litellm_cmd_context "$@" ;;
     reasoning)    ai_litellm_cmd_reasoning "$@" ;;
+    audit)        ai_litellm_cmd_audit "$@" ;;
     key)          ai_litellm_cmd_key "$@" ;;
     sync|--sync)  ai_litellm_sync "$@" ;;
     capabilities|--capabilities) ai_litellm_capabilities ;;

@@ -15,6 +15,7 @@ for file in \
 done
 
 python3 -m py_compile "$repo_root/scripts/verify_litellm_token_clamp.py"
+python3 -m py_compile "$repo_root/config/ai_litellm_callbacks/output_clamp.py"
 
 for file in \
   "$repo_root/config/ai-litellm/settings.json" \
@@ -39,6 +40,7 @@ HOME="$tmp_home" zsh -fc '
 prefix="$HOME/.local/share/ai-litellm-fabric"
 test -f "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/lib.zsh"
 test -f "$HOME/.local/share/ai-litellm-fabric/config/litellm_config.yaml"
+test -f "$HOME/.local/share/ai-litellm-fabric/config/ai_litellm_callbacks/output_clamp.py"
 test -x "$HOME/.local/share/ai-litellm-fabric/bin/claude-litellm"
 test -x "$HOME/.local/bin/claude-litellm"
 "$HOME/.local/bin/ai-litellm" --help >/dev/null
@@ -50,6 +52,32 @@ for harness in "${(@f)$(ai_litellm_harness_names)}"; do
   ai_litellm_harness_validate "$harness"
 done
 ai_litellm_model_limits GLM-5.1 >/dev/null
+ai_litellm_context_gateway_clamp_policy_ok
+ai_litellm_context_gateway_clamp_configured
+ai_litellm_model_info_anchor_refs_ok
+ai_litellm_model_policy_audit >/dev/null
+PYTHONPATH="$prefix/config" AI_LITELLM_CONFIG="$prefix/config/litellm_config.yaml" python3 - <<'"'"'PY'"'"'
+from ai_litellm_callbacks.output_clamp import CALLBACK_NAME, clamp_token_reservations, gateway_output_cap
+
+assert CALLBACK_NAME == "ai_litellm_callbacks.output_clamp.proxy_handler_instance"
+shared = {
+    "max_tokens": 999999,
+    "max_completion_tokens": 999999,
+    "model_info": {"max_input_tokens": 262144, "max_output_tokens": 262144},
+}
+assert gateway_output_cap(shared) == 32000
+clamp_token_reservations(shared)
+assert shared["max_tokens"] == 32000
+assert shared["max_completion_tokens"] == 32000
+
+small = {
+    "max_tokens": 999999,
+    "model_info": {"max_input_tokens": 8192, "max_output_tokens": 4096},
+}
+assert gateway_output_cap(small) == 3277
+clamp_token_reservations(small)
+assert small["max_tokens"] == 3277
+PY
 test "$(ai_litellm_harness_json codex models.default)" = "gpt-5.5"
 budget="$(ai_litellm_harness_output_budget claude sonnet Kimi-K2.6)"
 test "$(print -r -- "$budget" | jq -r ".effectiveInput > 0 and .reservation < .capability")" = "true"

@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import dataclasses
 import http.server
+import importlib.util
 import json
 import os
 import shutil
@@ -218,15 +219,42 @@ proxy_handler_instance = OutputClamp()
     )
 
 
+def materialize_callback_module(tmpdir: Path, callback_module: str, output_cap: int) -> None:
+    module_name = ".".join(callback_module.split(".")[:-1])
+    if module_name == "custom_callbacks":
+        write_callback(tmpdir, output_cap)
+        return
+
+    spec = importlib.util.find_spec(module_name)
+    if spec is None or spec.origin is None:
+        raise RuntimeError(f"Cannot locate callback module source: {module_name}")
+    source = Path(spec.origin)
+    if not source.is_file():
+        raise RuntimeError(f"Callback module source is not a file: {source}")
+
+    dest = tmpdir / Path(*module_name.split(".")).with_suffix(".py")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, dest)
+
+    package_parts = module_name.split(".")[:-1]
+    package_dir = tmpdir
+    for part in package_parts:
+        package_dir = package_dir / part
+        package_dir.mkdir(exist_ok=True)
+        init_file = package_dir / "__init__.py"
+        init_file.touch(exist_ok=True)
+
+
 def write_config(
     tmpdir: Path,
     upstream_base_url: str,
     *,
     output_cap: int,
     callback: bool,
+    callback_module: str,
     modify_params: bool,
 ) -> Path:
-    callbacks_line = "  callbacks: [custom_callbacks.proxy_handler_instance]\n" if callback else ""
+    callbacks_line = f"  callbacks: [{callback_module}]\n" if callback else ""
     modify_line = "  modify_params: true\n" if modify_params else ""
     config = f"""
 model_list:
@@ -243,6 +271,12 @@ model_list:
 general_settings:
   master_key: {MASTER_KEY}
 
+x-gateway-output-clamp:
+  enabled: true
+  default: {output_cap}
+  tokenizer_headroom: 1
+  minimum_input: 1
+
 litellm_settings:
   drop_params: true
 {modify_line}{callbacks_line}
@@ -252,7 +286,7 @@ router_settings:
     path = tmpdir / "litellm_config.yaml"
     path.write_text(config, encoding="utf-8")
     if callback:
-        write_callback(tmpdir, output_cap)
+        materialize_callback_module(tmpdir, callback_module, output_cap)
     return path
 
 
@@ -307,6 +341,7 @@ def run_litellm_proxy(
     log_path = cwd / "litellm.log"
     env = os.environ.copy()
     env["PYTHONPATH"] = str(cwd) + os.pathsep + env.get("PYTHONPATH", "")
+    env["AI_LITELLM_CONFIG"] = str(config_path)
     env["NO_PROXY"] = "127.0.0.1,localhost"
     env["LITELLM_TELEMETRY"] = "False"
     env["TOKEN_CLAMP_MARKER"] = str(cwd / "callback-marker.jsonl")
@@ -347,6 +382,7 @@ def run_case(
     state: MockState,
     output_cap: int,
     callback: bool,
+    callback_module: str,
     modify_params: bool,
     request_overrides: dict[str, Any],
     timeout: float,
@@ -366,6 +402,7 @@ def run_case(
             upstream_base_url,
             output_cap=output_cap,
             callback=callback,
+            callback_module=callback_module,
             modify_params=modify_params,
         )
         before = len(state.snapshot())
@@ -427,6 +464,11 @@ def main() -> int:
     )
     parser.add_argument("--litellm-bin", default=os.environ.get("LITELLM_BIN") or shutil.which("litellm"))
     parser.add_argument("--output-cap", type=int, default=8)
+    parser.add_argument(
+        "--callback-module",
+        default="custom_callbacks.proxy_handler_instance",
+        help="Callback object path to test for callback cases.",
+    )
     parser.add_argument("--timeout", type=float, default=45.0)
     parser.add_argument("--keep-temp", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
@@ -481,6 +523,7 @@ def main() -> int:
                 upstream_base_url=upstream_base_url,
                 state=state,
                 output_cap=args.output_cap,
+                callback_module=args.callback_module,
                 timeout=args.timeout,
                 keep_temp=args.keep_temp,
                 **case,
@@ -529,6 +572,7 @@ def main() -> int:
     verdict = {
         "litellm_bin": args.litellm_bin,
         "output_cap": args.output_cap,
+        "callback_module": args.callback_module,
         "plain_config_enforced_client_output_cap": plain_config_enforced,
         "modify_params_enforced_client_output_cap": modify_params_enforced,
         "hook_enforced_client_output_cap": hook_enforced,

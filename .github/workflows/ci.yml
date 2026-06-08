@@ -46,3 +46,13 @@ jobs:
           assert payload["hook_enforced_client_output_cap"] is True
           assert payload["recommended_policy"] == "async_pre_call_deployment_hook"
           PY
+          PYTHONPATH="$PWD/config" ./scripts/verify_litellm_token_clamp.py \
+            --callback-module ai_litellm_callbacks.output_clamp.proxy_handler_instance \
+            --json > clamp-production.json
+          python - <<'PY'
+          import json
+          payload = json.load(open("clamp-production.json"))
+          assert payload["callback_module"] == "ai_litellm_callbacks.output_clamp.proxy_handler_instance"
+          assert payload["hook_enforced_client_output_cap"] is True
+          assert payload["recommended_policy"] == "async_pre_call_deployment_hook"
+          PY

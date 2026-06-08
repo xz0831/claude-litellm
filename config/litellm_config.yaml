@@ -86,8 +86,18 @@ model_list:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 
+x-gateway-output-clamp:
+  # C4: provider-facing hard clamp for raw clients and future harnesses.
+  # The hook uses route model_info.max_output_tokens as capability and this
+  # policy as the reservation ceiling, preserving at least minimum_input tokens.
+  enabled: true
+  default: 32000
+  tokenizer_headroom: 8192
+  minimum_input: 32768
+
 litellm_settings:
   drop_params: true
+  callbacks: [ai_litellm_callbacks.output_clamp.proxy_handler_instance]
 
 router_settings:
   # Enforce max_input_tokens at the gateway: oversized prompts are rejected

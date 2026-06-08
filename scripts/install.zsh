@@ -153,6 +153,8 @@ require_file() {
 
 for file in \
   "$repo_root/config/litellm_config.yaml" \
+  "$repo_root/config/ai_litellm_callbacks/__init__.py" \
+  "$repo_root/config/ai_litellm_callbacks/output_clamp.py" \
   "$repo_root/config/ai-litellm/lib.zsh" \
   "$repo_root/config/ai-litellm/settings.json" \
   "$repo_root/config/ai-litellm/harnesses/schema.json" \
@@ -179,6 +181,7 @@ log "Command shims: $bin_dir"
 
 for dir in \
   "$prefix/bin" \
+  "$prefix/config/ai_litellm_callbacks" \
   "$prefix/config/ai-litellm/harnesses" \
   "$prefix/config/claude-litellm" \
   "$prefix/config/codex-litellm" \
@@ -206,6 +209,8 @@ for dir in \
 done
 
 install_rendered "$repo_root/config/litellm_config.yaml" "$prefix/config/litellm_config.yaml"
+install_rendered "$repo_root/config/ai_litellm_callbacks/__init__.py" "$prefix/config/ai_litellm_callbacks/__init__.py"
+install_rendered "$repo_root/config/ai_litellm_callbacks/output_clamp.py" "$prefix/config/ai_litellm_callbacks/output_clamp.py"
 install_rendered "$repo_root/config/ai-litellm/lib.zsh" "$prefix/config/ai-litellm/lib.zsh"
 install_rendered "$repo_root/config/ai-litellm/settings.json" "$prefix/config/ai-litellm/settings.json"
 for descriptor in "$repo_root"/config/ai-litellm/harnesses/*.json(N); do
