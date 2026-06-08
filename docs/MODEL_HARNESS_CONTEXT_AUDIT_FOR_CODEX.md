@@ -5,6 +5,16 @@ boundary) → per-probe adversarial verification → reduction. Live boundary pr
 proxy cost ~$0.02 total. Live runtime = the installed package `~/.local/share/ai-litellm-fabric`;
 source of truth = this repo. Models: DeepSeek-V4-Pro, Kimi-K2.6, GLM-5.1, local gemma (oMLX).
 
+## Codex follow-up status (2026-06-08)
+
+- **C2/C4/C5 resolved:** Codex now has descriptor-level output reservation, generated catalog windows are safe input budgets, and the gateway C4 callback clamps both `max_tokens` and `max_completion_tokens` before provider dispatch.
+- **C6 resolved as provider-authoritative:** `ai-litellm model refresh-capabilities` reconciles OpenRouter-backed anchors against OpenRouter `/api/v1/models`. Current OpenRouter top-provider truth is DeepSeek `1048576/384000`, Kimi `262142/262142`, GLM input `202752`; GLM output remains unpublished by OpenRouter and is explicitly `owned-policy` at `131072`, not provider-declared.
+- **C3 closed as owned policy for now:** local Gemma remains capped at `8192/4096` despite oMLX advertising a larger runtime window because `sliding_window=1024` makes long-context quality uncertain. Raising it requires a separate quality probe.
+- **C1 partially observed:** A simple-token 210K-word Claude `opus` prompt succeeded through DeepSeek and returned the tail marker (`inputTokens=211580`, cost `$1.05905`), so the hard 200K name-derived clamp hypothesis is false. Full 1M honor remains unprobed because `--max-budget-usd` did not act as a hard cap on this LiteLLM path.
+- **C7 observed; no code change:** Current catalog deletion produced no provider 400 on DeepSeek/Kimi/GLM, but `apply_patch` was not exposed to Codex exec. `apply_patch_tool_type="function"` is invalid for this Codex catalog schema, and `freeform` did not 400 but failed inside Codex core with incompatible payload/aborted. Keep deletion until Codex exposes a valid non-OpenAI patch tool mode.
+
+Important correction: the earlier GLM `204800` boundary observation is no longer used as source of truth because the requested provider refresh currently reports OpenRouter top-provider `context_length=202752`. The architecture now prefers provider-authoritative values unless a later bounded probe is recorded as `observed` and encoded with matching confidence metadata.
+
 ## TL;DR for Codex
 
 - **No zero-risk auto-fix qualified.** Every actionable change carries a value choice or an unverified

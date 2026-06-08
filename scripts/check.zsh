@@ -55,6 +55,10 @@ ai_litellm_model_limits GLM-5.1 >/dev/null
 ai_litellm_context_gateway_clamp_policy_ok
 ai_litellm_context_gateway_clamp_configured
 ai_litellm_model_info_anchor_refs_ok
+openrouter_models_fixture="$HOME/openrouter-models.json"
+print -r -- "{\"data\":[{\"id\":\"deepseek/deepseek-v4-pro\",\"context_length\":1048576,\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":384000},\"supported_parameters\":[\"reasoning\"]},{\"id\":\"moonshotai/kimi-k2.6\",\"context_length\":262144,\"top_provider\":{\"context_length\":262142,\"max_completion_tokens\":262142},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]},{\"id\":\"z-ai/glm-5.1\",\"context_length\":202752,\"top_provider\":{\"context_length\":202752,\"max_completion_tokens\":null},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]}]}" > "$openrouter_models_fixture"
+export AI_LITELLM_OPENROUTER_MODELS_JSON="$openrouter_models_fixture"
+ai_litellm_model_refresh_capabilities --check >/dev/null
 ai_litellm_model_policy_audit >/dev/null
 PYTHONPATH="$prefix/config" AI_LITELLM_CONFIG="$prefix/config/litellm_config.yaml" python3 - <<'"'"'PY'"'"'
 from ai_litellm_callbacks.output_clamp import CALLBACK_NAME, clamp_token_reservations, gateway_output_cap
@@ -82,17 +86,17 @@ test "$(ai_litellm_harness_json codex models.default)" = "gpt-5.5"
 budget="$(ai_litellm_harness_output_budget claude sonnet Kimi-K2.6)"
 test "$(print -r -- "$budget" | jq -r ".effectiveInput > 0 and .reservation < .capability")" = "true"
 codex_budget="$(ai_litellm_harness_output_budget codex gpt-5.4 gpt-5.4)"
-test "$(print -r -- "$codex_budget" | jq -r ".effectiveInput")" = "221952"
+test "$(print -r -- "$codex_budget" | jq -r ".effectiveInput")" = "221950"
 codex_catalog_map="$(ai_litellm_codex_catalog_context_map codex)"
-test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4\"")" = "221952"
-test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4-mini\"")" = "221952"
+test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4\"")" = "221950"
+test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4-mini\"")" = "221950"
 test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.5\"")" = "1008384"
 test "$(print -r -- "$codex_catalog_map" | jq -r ".\"local-omlx-gemma4-12b\"")" = "8192"
 codex_catalog="$(ai_litellm_harness_json codex paths.modelCatalog)"
 mkdir -p "${codex_catalog:h}"
 print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":262144}]}" > "$codex_catalog"
 ! ai_litellm_doctor_limit_sync >/dev/null 2>&1
-print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":221952}]}" > "$codex_catalog"
+print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":221950}]}" > "$codex_catalog"
 ai_litellm_doctor_limit_sync >/dev/null
 ai_litellm_render_claude_settings claude
 claude_settings="$(ai_litellm_harness_json claude paths.settingsArg)"

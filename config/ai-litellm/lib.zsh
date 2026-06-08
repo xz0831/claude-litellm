@@ -2360,14 +2360,315 @@ ai_litellm_limits_table() {
   ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 filter = ARGV[1] || ""
-printf("%-22s %-12s %-12s\n", "model_name", "context", "output")
+printf("%-22s %-12s %-12s %-14s %-14s\n", "model_name", "context", "output", "input_source", "output_source")
 Array(config["model_list"]).each do |e|
   name = e["model_name"]
   next if !filter.empty? && name != filter
   mi = e["model_info"] || {}
-  printf("%-22s %-12s %-12s\n", name, (mi["max_input_tokens"] || "-").to_s, (mi["max_output_tokens"] || "-").to_s)
+  printf("%-22s %-12s %-12s %-14s %-14s\n",
+    name,
+    (mi["max_input_tokens"] || "-").to_s,
+    (mi["max_output_tokens"] || "-").to_s,
+    (mi["x_input_confidence"] || "local-config").to_s,
+    (mi["x_output_confidence"] || "local-config").to_s)
 end
 ' "$AI_LITELLM_CONFIG" "$filter"
+}
+
+ai_litellm_model_refresh_capabilities() {
+  local apply=0 as_json=0 check=0
+  while (( $# > 0 )); do
+    case "$1" in
+      --apply) apply=1 ;;
+      --json) as_json=1 ;;
+      --check) check=1 ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: ai-litellm model refresh-capabilities [--apply] [--json] [--check]
+
+Reconcile OpenRouter-backed x-limits anchors with OpenRouter /api/v1/models.
+Default mode is read-only. --apply updates provider-published fields only.
+Set AI_LITELLM_OPENROUTER_MODELS_JSON to a local fixture path for offline tests.
+EOF
+        return 0
+        ;;
+      *) echo "Usage: ai-litellm model refresh-capabilities [--apply] [--json] [--check]" >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  local payload_file cleanup=0
+  if [[ -n "${AI_LITELLM_OPENROUTER_MODELS_JSON:-}" ]]; then
+    payload_file="$AI_LITELLM_OPENROUTER_MODELS_JSON"
+    [[ -f "$payload_file" ]] || { echo "Missing AI_LITELLM_OPENROUTER_MODELS_JSON file: $payload_file" >&2; return 1; }
+  else
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/openrouter-models.XXXXXX.json")" || return 1
+    cleanup=1
+    curl -fsSL https://openrouter.ai/api/v1/models > "$payload_file" || {
+      (( cleanup )) && rm -f "$payload_file"
+      return 1
+    }
+  fi
+
+  ruby -rjson -ryaml - "$AI_LITELLM_CONFIG" "$payload_file" "$apply" "$as_json" "$check" <<'RUBY'
+config_path, provider_path, apply_raw, json_raw, check_raw = ARGV
+apply_changes = apply_raw == "1"
+as_json = json_raw == "1"
+check = check_raw == "1"
+
+def positive_int(value)
+  n = Integer(value)
+  n.positive? ? n : nil
+rescue
+  nil
+end
+
+def yaml_scalar(value)
+  case value
+  when Integer
+    value.to_s
+  when TrueClass, FalseClass
+    value ? "true" : "false"
+  else
+    text = value.to_s
+    text.match?(/\A[A-Za-z0-9_.\/-]+\z/) ? text : text.to_json
+  end
+end
+
+def first_positive_with_source(*pairs)
+  pairs.each do |source, value|
+    n = positive_int(value)
+    return [n, source] if n
+  end
+  [nil, nil]
+end
+
+def source_conf(info, dimension)
+  (info["x_#{dimension}_confidence"] || "local-config").to_s
+end
+
+def source_name(info, dimension)
+  (info["x_#{dimension}_source"] || "-").to_s
+end
+
+def numeric_status(configured, provider, confidence)
+  conf = confidence.to_s
+  if provider
+    return "drift" if positive_int(configured) != provider
+    return "ok" if %w[provider observed].include?(conf)
+    return "source-missing"
+  end
+  return "owned-policy" if conf == "owned-policy"
+  return "observed" if conf == "observed"
+  "provider-missing"
+end
+
+def bool_status(configured, provider, confidence)
+  conf = confidence.to_s
+  return "provider-missing" if provider.nil?
+  return "drift" unless configured == provider
+  return "ok" if %w[provider observed].include?(conf)
+  "source-missing"
+end
+
+def update_anchor_field(lines, alias_name, field, value)
+  start = lines.index { |line| line.match?(/^  #{Regexp.escape(alias_name)}:\s*&#{Regexp.escape(alias_name)}\s*$/) }
+  raise "Cannot apply to missing or inline x-limits anchor: #{alias_name}" unless start
+  finish = ((start + 1)...lines.length).find do |idx|
+    lines[idx].match?(/^  [A-Za-z0-9_]+:\s*&[A-Za-z0-9_]+\s*$/) || lines[idx].match?(/^model_list:\s*$/)
+  end || lines.length
+  rendered = "    #{field}: #{yaml_scalar(value)}\n"
+  current = ((start + 1)...finish).find { |idx| lines[idx].match?(/^    #{Regexp.escape(field)}:\s*/) }
+  if current
+    return false if lines[current] == rendered
+    lines[current] = rendered
+  else
+    lines.insert(finish, rendered)
+  end
+  true
+end
+
+raw_config = File.read(config_path)
+config = (YAML.load_file(config_path, aliases: true) rescue YAML.load_file(config_path))
+provider_payload = JSON.parse(File.read(provider_path))
+provider_index = Array(provider_payload["data"]).each_with_object({}) { |entry, acc| acc[entry["id"]] = entry if entry["id"] }
+
+alias_routes = Hash.new { |h, k| h[k] = { "surfaces" => [], "routes" => [] } }
+raw_config.split(/\n(?=  - model_name:\s*)/).each do |entry|
+  next unless entry =~ /^\s+- model_name:\s*(.+?)\s*$/
+  surface = Regexp.last_match(1).strip
+  route = entry[/^\s+model:\s*(\S+)\s*$/, 1]
+  anchor = entry[/^\s+model_info:\s*\*([A-Za-z0-9_]+)\s*$/, 1]
+  next unless anchor && route
+  alias_routes[anchor]["surfaces"] << surface
+  alias_routes[anchor]["routes"] << route unless alias_routes[anchor]["routes"].include?(route)
+end
+
+rows = []
+(config["x-limits"] || {}).each do |alias_name, info|
+  info ||= {}
+  route = alias_routes.dig(alias_name, "routes", 0)
+  surfaces = alias_routes.dig(alias_name, "surfaces") || []
+  openrouter = route.to_s.start_with?("openrouter/")
+  provider_id = openrouter ? route.sub(/\Aopenrouter\//, "") : nil
+  provider = provider_id && provider_index[provider_id]
+
+  row = {
+    "alias" => alias_name,
+    "provider_model" => route || "-",
+    "surfaces" => surfaces,
+    "openrouter" => openrouter,
+    "provider_found" => !!provider
+  }
+
+  if provider
+    provider_input, provider_input_source = first_positive_with_source(
+      ["openrouter.top_provider.context_length", provider.dig("top_provider", "context_length")],
+      ["openrouter.context_length", provider["context_length"]]
+    )
+    provider_output, provider_output_source = first_positive_with_source(
+      ["openrouter.top_provider.max_completion_tokens", provider.dig("top_provider", "max_completion_tokens")],
+      ["openrouter.max_completion_tokens", provider["max_completion_tokens"]]
+    )
+    params = Array(provider["supported_parameters"])
+    provider_reasoning = params.any? { |param| %w[reasoning reasoning_effort include_reasoning].include?(param.to_s) }
+
+    input_conf = source_conf(info, "input")
+    output_conf = source_conf(info, "output")
+    reasoning_conf = source_conf(info, "reasoning")
+    row["input"] = {
+      "configured" => info["max_input_tokens"],
+      "provider" => provider_input,
+      "confidence" => input_conf,
+      "source" => source_name(info, "input"),
+      "provider_source" => provider_input_source,
+      "status" => numeric_status(info["max_input_tokens"], provider_input, input_conf)
+    }
+    row["output"] = {
+      "configured" => info["max_output_tokens"],
+      "provider" => provider_output,
+      "confidence" => output_conf,
+      "source" => source_name(info, "output"),
+      "provider_source" => provider_output_source,
+      "status" => numeric_status(info["max_output_tokens"], provider_output, output_conf)
+    }
+    row["reasoning"] = {
+      "configured" => info.key?("supports_reasoning") ? !!info["supports_reasoning"] : nil,
+      "provider" => provider_reasoning,
+      "confidence" => reasoning_conf,
+      "source" => source_name(info, "reasoning"),
+      "provider_source" => "openrouter.supported_parameters",
+      "status" => bool_status(info.key?("supports_reasoning") ? !!info["supports_reasoning"] : nil, provider_reasoning, reasoning_conf)
+    }
+  else
+    row["input"] = {
+      "configured" => info["max_input_tokens"],
+      "provider" => nil,
+      "confidence" => source_conf(info, "input"),
+      "source" => source_name(info, "input"),
+      "provider_source" => nil,
+      "status" => openrouter ? "no-provider-model" : source_conf(info, "input")
+    }
+    row["output"] = {
+      "configured" => info["max_output_tokens"],
+      "provider" => nil,
+      "confidence" => source_conf(info, "output"),
+      "source" => source_name(info, "output"),
+      "provider_source" => nil,
+      "status" => openrouter ? "no-provider-model" : source_conf(info, "output")
+    }
+    row["reasoning"] = {
+      "configured" => info.key?("supports_reasoning") ? !!info["supports_reasoning"] : nil,
+      "provider" => nil,
+      "confidence" => source_conf(info, "reasoning"),
+      "source" => source_name(info, "reasoning"),
+      "provider_source" => nil,
+      "status" => openrouter ? "no-provider-model" : source_conf(info, "reasoning")
+    }
+  end
+  rows << row
+end
+
+changes = []
+if apply_changes
+  lines = raw_config.lines
+  rows.each do |row|
+    next unless row["openrouter"] && row["provider_found"]
+    alias_name = row["alias"]
+    input = row["input"] || {}
+    output = row["output"] || {}
+    reasoning = row["reasoning"] || {}
+
+    if input["provider"] && input["status"] != "ok"
+      changes << "#{alias_name}.max_input_tokens=#{input["provider"]}" if update_anchor_field(lines, alias_name, "max_input_tokens", input["provider"])
+      changes << "#{alias_name}.x_input_confidence=provider" if update_anchor_field(lines, alias_name, "x_input_confidence", "provider")
+      changes << "#{alias_name}.x_input_source=#{input["provider_source"]}" if update_anchor_field(lines, alias_name, "x_input_source", input["provider_source"])
+    end
+    if output["provider"] && output["status"] != "ok"
+      changes << "#{alias_name}.max_output_tokens=#{output["provider"]}" if update_anchor_field(lines, alias_name, "max_output_tokens", output["provider"])
+      changes << "#{alias_name}.x_output_confidence=provider" if update_anchor_field(lines, alias_name, "x_output_confidence", "provider")
+      changes << "#{alias_name}.x_output_source=#{output["provider_source"]}" if update_anchor_field(lines, alias_name, "x_output_source", output["provider_source"])
+    end
+    if !reasoning["provider"].nil? && reasoning["status"] != "ok"
+      changes << "#{alias_name}.supports_reasoning=#{reasoning["provider"]}" if update_anchor_field(lines, alias_name, "supports_reasoning", reasoning["provider"])
+      changes << "#{alias_name}.x_reasoning_confidence=provider" if update_anchor_field(lines, alias_name, "x_reasoning_confidence", "provider")
+      changes << "#{alias_name}.x_reasoning_source=#{reasoning["provider_source"]}" if update_anchor_field(lines, alias_name, "x_reasoning_source", reasoning["provider_source"])
+    end
+  end
+
+  if changes.any?
+    tmp = "#{config_path}.tmp.#{$$}"
+    File.write(tmp, lines.join)
+    File.chmod(File.stat(config_path).mode & 0o777, tmp)
+    File.rename(tmp, config_path)
+  end
+end
+
+issue_statuses = %w[drift source-missing provider-missing no-provider-model]
+issues = rows.flat_map do |row|
+  %w[input output reasoning].map do |dim|
+    status = row.dig(dim, "status").to_s
+    issue_statuses.include?(status) ? {"alias" => row["alias"], "dimension" => dim, "status" => status} : nil
+  end.compact
+end
+
+if as_json
+  puts JSON.pretty_generate({
+    "provider" => "openrouter",
+    "applied" => apply_changes,
+    "changes" => changes,
+    "rows" => rows,
+    "issues" => issues
+  })
+else
+  printf("%-18s %-42s %-25s %-25s %-18s %-18s %-18s\n",
+    "alias", "provider_model", "input(config/provider)", "output(config/provider)",
+    "input_status", "output_status", "reasoning_status")
+  rows.each do |row|
+    input = row["input"] || {}
+    output = row["output"] || {}
+    reasoning = row["reasoning"] || {}
+    printf("%-18s %-42s %-25s %-25s %-18s %-18s %-18s\n",
+      row["alias"],
+      row["provider_model"],
+      "#{input["configured"] || "-"}/#{input["provider"] || "-"}",
+      "#{output["configured"] || "-"}/#{output["provider"] || "-"}",
+      input["status"] || "-",
+      output["status"] || "-",
+      reasoning["status"] || "-")
+  end
+  if apply_changes
+    puts changes.empty? ? "No provider-published changes to apply." : "Applied #{changes.length} field update(s)."
+  elsif issues.any?
+    puts "Provider drift/source issues remain. Re-run with --apply for provider-published fields; owned-policy rows require an explicit local decision."
+  end
+end
+
+exit(issues.any? && check ? 1 : 0)
+RUBY
+  local rc=$?
+  (( cleanup )) && rm -f "$payload_file"
+  return $rc
 }
 
 # Provider/backend reasoning capability table from the LiteLLM registry. It
@@ -3339,12 +3640,20 @@ def output_budget(descriptor, selection, model, ctx, out)
   }
 end
 
+def model_limit_confidence(mi)
+  input = (mi["x_input_confidence"] || "local-config").to_s
+  output = (mi["x_output_confidence"] || "local-config").to_s
+  input == output ? input : "input:#{input}/output:#{output}"
+end
+
 def add_litellm_row(rows, registry, model, surface, selection, budget_kind, auth_lane, enforcement, confidence, descriptor = nil)
   entry = registry[model]
   mi = entry && entry["model_info"] || {}
   ctx = mi["max_input_tokens"]
   out = mi["max_output_tokens"]
   budget = output_budget(descriptor, selection, model, ctx, out)
+  model_confidence = model_limit_confidence(mi)
+  combined_confidence = [model_confidence, confidence].reject { |v| v.nil? || v.to_s.empty? }.join("+")
   add_row(rows,
     surface: surface,
     selection: selection,
@@ -3358,7 +3667,7 @@ def add_litellm_row(rows, registry, model, surface, selection, budget_kind, auth
     observed_context: nil,
     effective_input_budget: budget ? budget[:effective_input] : ctx,
     enforcement_layer: enforcement,
-    source_confidence: budget ? "#{confidence}+reservation" : confidence)
+    source_confidence: budget ? "#{combined_confidence}+reservation" : combined_confidence)
 end
 
 def descriptor_context(descriptor, harness, router_enforcement)
@@ -3468,7 +3777,7 @@ Array(settings["runtimes"] || {}).each do |name, rt|
       # caps below the LiteLLM policy is the real ceiling, not the policy number.
       effective_input_budget: [runtime_ctx, mi["max_input_tokens"]].compact.map(&:to_i).min,
       enforcement_layer: "runtime+LiteLLM",
-      source_confidence: runtime_ctx ? "model-file+local-config" : "local-config")
+      source_confidence: runtime_ctx ? "model-file+#{model_limit_confidence(mi)}" : model_limit_confidence(mi))
   end
 end
 
@@ -3995,8 +4304,13 @@ Array(settings["runtimes"] || {}).each do |name, rt|
     payload = JSON.parse(File.read(path)) rescue {}
     runtime_ctx = payload.dig("text_config", "max_position_embeddings") || payload["max_position_embeddings"] || payload["max_model_len"]
     configured = registry.dig(model, "model_info", "max_input_tokens")
+    confidence = registry.dig(model, "model_info", "x_input_confidence").to_s
     if runtime_ctx && configured && configured.to_i < runtime_ctx.to_i
-      puts "oMLX runtime/model context appears higher than LiteLLM policy cap for #{model}: runtime=#{runtime_ctx} configured=#{configured}"
+      if confidence == "owned-policy"
+        puts "owned-policy: #{model} LiteLLM input cap intentionally remains below oMLX runtime capacity: runtime=#{runtime_ctx} configured=#{configured}"
+      else
+        puts "oMLX runtime/model context appears higher than LiteLLM policy cap for #{model}: runtime=#{runtime_ctx} configured=#{configured}"
+      end
     elsif runtime_ctx && configured && configured.to_i > runtime_ctx.to_i
       # Dangerous direction: LiteLLM admits prompts up to `configured`, but the
       # runtime physically caps at `runtime_ctx` and will reject the overflow.
@@ -4015,12 +4329,39 @@ config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 Array(config["model_list"]).each do |e|
   next unless e.dig("litellm_params", "model").to_s == "openrouter/z-ai/glm-5.1"
   out = e.dig("model_info", "max_output_tokens")
+  confidence = e.dig("model_info", "x_output_confidence").to_s
   if out
-    puts "GLM-5.1 output cap #{out} is local-configured; keep provider-declared confidence lower unless OpenRouter max_completion_tokens is observed."
+    if confidence == "owned-policy"
+      puts "owned-policy: GLM-5.1 output cap #{out} is a conservative local ceiling because OpenRouter omits max_completion_tokens."
+    elsif !%w[provider observed].include?(confidence)
+      puts "GLM-5.1 output cap #{out} is #{confidence.empty? ? "local-configured" : confidence}; keep provider-declared confidence lower unless OpenRouter max_completion_tokens is observed."
+    end
   end
   break
 end
 ' "$AI_LITELLM_CONFIG" | while IFS= read -r line; do
+    [[ -n "$line" ]] && ai_litellm_context_doctor_warn "$line"
+  done
+}
+
+ai_litellm_context_warn_provider_capability_drift() {
+  local report
+  report="$(ai_litellm_model_refresh_capabilities --json 2>/dev/null)" || return 0
+  print -r -- "$report" | ruby -rjson -e '
+payload = JSON.parse(STDIN.read) rescue {}
+rows = Array(payload["rows"])
+issue_statuses = %w[drift source-missing provider-missing no-provider-model]
+rows.each do |row|
+  %w[input output reasoning].each do |dim|
+    data = row[dim] || {}
+    status = data["status"].to_s
+    next unless issue_statuses.include?(status)
+    configured = data.key?("configured") && !data["configured"].nil? ? data["configured"] : "-"
+    provider = data.key?("provider") && !data["provider"].nil? ? data["provider"] : "-"
+    puts "provider-capability #{status}: #{row["alias"]} #{dim} configured=#{configured} provider=#{provider}"
+  end
+end
+' | while IFS= read -r line; do
     [[ -n "$line" ]] && ai_litellm_context_doctor_warn "$line"
   done
 }
@@ -4085,6 +4426,7 @@ ai_litellm_context_doctor() {
   ai_litellm_context_warn_goose_scope
   ai_litellm_context_warn_omlx_policy_cap
   ai_litellm_context_warn_glm_output_source
+  ai_litellm_context_warn_provider_capability_drift
   ai_litellm_context_warn_output_clamp
   return $failed
 }
@@ -4140,6 +4482,7 @@ ai_litellm_cmd_model() {
     list|"")      ai_litellm_list ;;
     info)         ai_litellm_route_info "$@" ;;
     limits)       ai_litellm_limits_table "$@" ;;
+    refresh-capabilities) ai_litellm_model_refresh_capabilities "$@" ;;
     reasoning)
       case "${1:-}" in
         probe) shift; ai_litellm_model_reasoning_probe "$@" ;;
@@ -4150,7 +4493,7 @@ ai_litellm_cmd_model() {
       ;;
     probe)        ai_litellm_probe_routes "$@" ;;
     capabilities) ai_litellm_capabilities ;;
-    *) echo "Usage: ai-litellm model list|info [model]|limits [model]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|probe <model...>|capabilities" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm model list|info [model]|limits [model]|refresh-capabilities [--apply|--json|--check]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|probe <model...>|capabilities" >&2; return 1 ;;
   esac
 }
 
@@ -4212,6 +4555,7 @@ ai_litellm_model_policy_audit() {
   ai_litellm_doctor_check "reasoning matrix renders" ai_litellm_quiet ai_litellm_model_reasoning_table || failed=1
   ai_litellm_context_warn_omlx_policy_cap
   ai_litellm_context_warn_glm_output_source
+  ai_litellm_context_warn_provider_capability_drift
   ai_litellm_context_warn_output_clamp
   return $failed
 }
@@ -4244,7 +4588,7 @@ Usage: ai-litellm <group> <verb> [args]
             ai-litellm harness reasoning set <name> <effort>
             ai-litellm harness reasoning unset <name>
   Runtime:  ai-litellm runtime list|status [name]|doctor <name>
-  Model:    ai-litellm model list|info [model]|limits [model]|probe <model...>|capabilities
+  Model:    ai-litellm model list|info [model]|limits [model]|refresh-capabilities [opts]|probe <model...>|capabilities
             ai-litellm model reasoning probe <model> [effort]
             ai-litellm model reasoning set <model> <effort>
             ai-litellm model reasoning unset <model>
