@@ -166,6 +166,60 @@ ai_litellm_keychain_value() {
   security find-generic-password -s "$service" -a "$account" -w 2>/dev/null
 }
 
+ai_litellm_keychain_service_for_env() {
+  local var="$1"
+  local service
+  service="$(ai_litellm_json "secrets.$var.keychainService" 2>/dev/null || true)"
+  if [[ -n "$service" ]]; then
+    printf '%s\n' "$service"
+    return 0
+  fi
+  case "$var" in
+    OPENROUTER_API_KEY) printf '%s\n' "$OPENROUTER_KEYCHAIN_SERVICE" ;;
+    LITELLM_MASTER_KEY) printf '%s\n' "$LITELLM_MASTER_KEYCHAIN_SERVICE" ;;
+    *) printf '%s\n' "$(printf '%s' "$var" | tr 'A-Z_' 'a-z-')" ;;
+  esac
+}
+
+ai_litellm_keychain_account_for_env() {
+  local var="$1"
+  local account
+  account="$(ai_litellm_json "secrets.$var.keychainAccount" 2>/dev/null || true)"
+  if [[ -n "$account" ]]; then
+    printf '%s\n' "$account"
+    return 0
+  fi
+  case "$var" in
+    OPENROUTER_API_KEY) printf '%s\n' "$OPENROUTER_KEYCHAIN_ACCOUNT" ;;
+    LITELLM_MASTER_KEY) printf '%s\n' "$LITELLM_MASTER_KEYCHAIN_ACCOUNT" ;;
+    *) printf '%s\n' "$USER" ;;
+  esac
+}
+
+ai_litellm_keychain_set_value() {
+  local service="$1"
+  local account="$2"
+  local value="$3"
+  command -v security >/dev/null 2>&1 || {
+    echo "macOS Keychain command not found: security" >&2
+    return 1
+  }
+  if [[ -z "$service" || -z "$account" ]]; then
+    echo "Keychain service and account are required." >&2
+    return 1
+  fi
+  if [[ -z "$value" ]]; then
+    echo "Refusing to store an empty Keychain value." >&2
+    return 1
+  fi
+  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+    echo "Refusing to store multiline Keychain value." >&2
+    return 1
+  fi
+
+  security add-generic-password -U -s "$service" -a "$account" -w "$value" >/dev/null
+}
+
 ai_litellm_openrouter_key() {
   if [[ -n "$OPENROUTER_API_KEY" ]]; then
     printf '%s\n' "$OPENROUTER_API_KEY"
@@ -1189,6 +1243,18 @@ const settings = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 const runtime = settings.runtimes && settings.runtimes[process.argv[2]];
 if (!runtime) process.exit(1);
 for (const model of runtime.expectedModels || []) console.log(model);
+	' "$AI_LITELLM_SETTINGS" "$runtime"
+}
+
+ai_litellm_runtime_recommended_models() {
+  local runtime="$1"
+  [[ -f "$AI_LITELLM_SETTINGS" ]] || return 1
+  node -e '
+const fs = require("fs");
+const settings = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const runtime = settings.runtimes && settings.runtimes[process.argv[2]];
+if (!runtime) process.exit(1);
+for (const model of runtime.recommendedModels || []) console.log(model);
 ' "$AI_LITELLM_SETTINGS" "$runtime"
 }
 
@@ -1269,8 +1335,37 @@ process.exit(ids.includes(target) ? 0 : 1);
   esac
 }
 
-# Validate one runtime block: required string fields, supported kind, non-empty
-# expectedModels, and apiBase nested under baseUrl. Errors go to stderr.
+ai_litellm_runtime_available_models() {
+  local runtime="$1"
+  local kind api_base
+  kind="$(ai_litellm_runtime_kind "$runtime")"
+  api_base="$(ai_litellm_runtime_field "$runtime" apiBase 2>/dev/null)" || return 1
+  case "$kind" in
+    openai-compatible)
+      curl --max-time 3 -fsS "$api_base/models" 2>/dev/null | node -e '
+const fs = require("fs");
+let payload;
+try {
+  payload = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch {
+  process.exit(1);
+}
+const ids = (payload.data || payload.models || [])
+  .map((model) => model.id || model.model || model.name)
+  .filter(Boolean)
+  .sort();
+for (const id of ids) console.log(id);
+'
+      ;;
+    *)
+      echo "Unsupported runtime kind '$kind' for runtime '$runtime'" >&2
+      return 1
+      ;;
+  esac
+}
+
+# Validate one runtime block: required string fields, supported kind, optional
+# expected/recommended model arrays, and apiBase nested under baseUrl.
 ai_litellm_runtime_validate() {
   local runtime="$1"
   [[ -f "$AI_LITELLM_SETTINGS" ]] || return 1
@@ -1288,8 +1383,12 @@ for (const k of ["kind", "baseUrl", "apiBase", "modelPrefix"]) {
   if (typeof rt[k] !== "string" || rt[k].length === 0) errs.push(`${k} must be a non-empty string`);
 }
 if (rt.kind && !supported.includes(rt.kind)) errs.push(`unsupported kind: ${rt.kind} (supported: ${supported.join(", ")})`);
-if (!Array.isArray(rt.expectedModels) || rt.expectedModels.length === 0) errs.push("expectedModels must be a non-empty array");
-else if (rt.expectedModels.some((m) => typeof m !== "string" || !m.length)) errs.push("expectedModels entries must be strings");
+if (rt.expectedModels != null && (!Array.isArray(rt.expectedModels) || rt.expectedModels.some((m) => typeof m !== "string" || !m.length))) {
+  errs.push("expectedModels must be an array of strings when present");
+}
+if (rt.recommendedModels != null && (!Array.isArray(rt.recommendedModels) || rt.recommendedModels.some((m) => typeof m !== "string" || !m.length))) {
+  errs.push("recommendedModels must be an array of strings when present");
+}
 if (typeof rt.apiBase === "string" && typeof rt.baseUrl === "string" && rt.baseUrl && !rt.apiBase.startsWith(rt.baseUrl)) {
   errs.push(`apiBase (${rt.apiBase}) should start with baseUrl (${rt.baseUrl})`);
 }
@@ -1298,8 +1397,9 @@ if (errs.length) { console.error(`runtime ${name}: ${errs.join("; ")}`); process
 }
 
 # Cross-file consistency between settings.json runtimes and the litellm registry:
-# expectedModels exist in the registry; prefix-matched models point at the runtime's
-# apiBase; every local-* registry model belongs to some runtime prefix.
+# required expectedModels exist in the registry; prefix-matched models point at
+# the runtime's apiBase; every local-* registry model belongs to some runtime
+# prefix. recommendedModels are documentation/sample routes and may be absent.
 ai_litellm_runtime_consistency() {
   [[ -f "$AI_LITELLM_SETTINGS" && -f "$AI_LITELLM_CONFIG" ]] || return 0
   ruby -ryaml -rjson -e '
@@ -1387,14 +1487,39 @@ ai_litellm_runtime_status_one() {
   fi
 
   local model
-  echo "Expected models:"
-  ai_litellm_runtime_expected_models "$runtime" 2>/dev/null | while IFS= read -r model; do
-    if ai_litellm_runtime_model_available "$runtime" "$model"; then
-      printf '  ok   %s\n' "$model"
-    else
-      printf '  fail %s\n' "$model"
+  local -a expected_models recommended_models missing_models available_models
+  expected_models=("${(@f)$(ai_litellm_runtime_expected_models "$runtime" 2>/dev/null)}")
+  expected_models=("${(@)expected_models:#}")
+  if (( ${#expected_models[@]} > 0 )); then
+    echo "Required models:"
+    for model in "${expected_models[@]}"; do
+      if ai_litellm_runtime_model_available "$runtime" "$model"; then
+        printf '  ok   %s\n' "$model"
+      else
+        printf '  fail %s\n' "$model"
+        missing_models+=("$model")
+      fi
+    done
+  else
+    echo "Required models: none"
+  fi
+
+  recommended_models=("${(@f)$(ai_litellm_runtime_recommended_models "$runtime" 2>/dev/null)}")
+  recommended_models=("${(@)recommended_models:#}")
+  if (( ${#recommended_models[@]} > 0 )); then
+    echo "Recommended sample routes:"
+    printf '  %s\n' "${recommended_models[@]}"
+  fi
+
+  if ai_litellm_runtime_reachable "$runtime"; then
+    available_models=("${(@f)$(ai_litellm_runtime_available_models "$runtime" 2>/dev/null)}")
+    available_models=("${(@)available_models:#}")
+    if (( ${#available_models[@]} > 0 )); then
+      echo "Runtime advertises models:"
+      printf '  %s\n' "${available_models[@]}"
+      echo "Hint: run 'ai-litellm sync' to generate local routes for advertised models."
     fi
-  done
+  fi
 }
 
 ai_litellm_runtime_status() {
@@ -1420,10 +1545,12 @@ ai_litellm_runtime_status() {
 
 ai_litellm_model_runtime_ready() {
   local model_name="$1"
-  local runtime
+  local runtime backend_model runtime_model
   runtime="$(ai_litellm_model_runtime "$model_name" 2>/dev/null)" || return 0
+  backend_model="$(ai_litellm_model_backend "$model_name" 2>/dev/null || printf '%s\n' "$model_name")"
+  runtime_model="${backend_model#openai/}"
 
-  if ai_litellm_runtime_model_available "$runtime" "$model_name"; then
+  if ai_litellm_runtime_model_available "$runtime" "$runtime_model"; then
     return 0
   fi
 
@@ -1435,7 +1562,8 @@ ai_litellm_model_runtime_ready() {
   echo "Runtime '$runtime' is not ready for LiteLLM model '$model_name'." >&2
   echo "Endpoint: $api_base" >&2
   echo "Start it manually: $start_command" >&2
-  echo "Expected model directory: $models_dir/$model_name" >&2
+  echo "Expected runtime model: $runtime_model" >&2
+  echo "Expected model directory: $models_dir/$runtime_model" >&2
   echo "No fallback was attempted." >&2
   return 1
 }
@@ -1872,7 +2000,7 @@ ai_litellm_probe_route() {
   payload="$(jq -nc --arg model "$model_name" '{
     model: $model,
     messages: [{role: "user", content: "Reply with exactly OK"}],
-    max_tokens: 128,
+    max_tokens: 8,
     temperature: 0
   }')"
 
@@ -1990,24 +2118,70 @@ ai_litellm_key_name_to_env() {
 }
 
 ai_litellm_key_set() {
+  local storage="env-file"
+  while (( $# > 0 )); do
+    case "$1" in
+      --keychain) storage="keychain"; shift ;;
+      --env-file) storage="env-file"; shift ;;
+      --) shift; break ;;
+      -*) echo "Unknown key set option: $1" >&2; return 1 ;;
+      *) break ;;
+    esac
+  done
+
   local name="${1:-}"
   local value="${2:-}"
+  local value_provided=0
+  (( $# == 2 )) && value_provided=1
   if [[ -z "$name" || $# -gt 2 ]]; then
-    echo "Usage: ai-litellm key set <openrouter|ENV_VAR|provider-name> [value]" >&2
-    echo "Omit [value] to enter it without echoing." >&2
+    echo "Usage: ai-litellm key set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]" >&2
+    echo "Omit [value] to enter it without echoing. Prefer --keychain on macOS." >&2
     return 1
   fi
 
   local env_key
   env_key="$(ai_litellm_key_name_to_env "$name")" || return $?
+  if (( value_provided )); then
+    echo "warn: passing secrets as command arguments may be recorded by your shell or process tools; omit [value] for hidden input." >&2
+  fi
+
+  if [[ "$storage" == "keychain" && "$value_provided" == "0" && -t 0 ]]; then
+    local service account
+    service="$(ai_litellm_keychain_service_for_env "$env_key")" || return $?
+    account="$(ai_litellm_keychain_account_for_env "$env_key")" || return $?
+    echo "Value for $env_key will be read by macOS Keychain prompt." >&2
+    security add-generic-password -U -s "$service" -a "$account" -w || return $?
+    echo "Stored $env_key in macOS Keychain service $service"
+    if ai_litellm_env_value "$env_key" >/dev/null 2>&1; then
+      echo "warn: $AI_LITELLM_ENV also contains $env_key and currently takes precedence over Keychain." >&2
+    fi
+    echo "Run 'ai-litellm sync' if the proxy is already running."
+    return 0
+  fi
+
   if [[ -z "$value" ]]; then
     printf 'Value for %s: ' "$env_key" >&2
-    IFS= read -rs value
+    IFS= read -rs value || {
+      printf '\n' >&2
+      echo "No value read for $env_key." >&2
+      return 1
+    }
     printf '\n' >&2
   fi
 
-  ai_litellm_env_set_value "$env_key" "$value" || return $?
-  echo "Stored $env_key in $AI_LITELLM_ENV"
+  if [[ "$storage" == "keychain" ]]; then
+    local service account
+    service="$(ai_litellm_keychain_service_for_env "$env_key")" || return $?
+    account="$(ai_litellm_keychain_account_for_env "$env_key")" || return $?
+    ai_litellm_keychain_set_value "$service" "$account" "$value" || return $?
+    echo "Stored $env_key in macOS Keychain service $service"
+    if ai_litellm_env_value "$env_key" >/dev/null 2>&1; then
+      echo "warn: $AI_LITELLM_ENV also contains $env_key and currently takes precedence over Keychain." >&2
+    fi
+  else
+    ai_litellm_env_set_value "$env_key" "$value" || return $?
+    echo "Stored $env_key in $AI_LITELLM_ENV"
+  fi
   echo "Run 'ai-litellm sync' if the proxy is already running."
 }
 
@@ -2244,6 +2418,135 @@ ai_litellm_render_codex_config() {
   )
 }
 
+ai_litellm_runtime_discovery_enabled() {
+  local runtime="$1"
+  local value
+  value="$(ai_litellm_runtime_field "$runtime" discoverModels 2>/dev/null || printf 'false')"
+  [[ "$value" == "true" ]]
+}
+
+ai_litellm_runtime_routes_write() {
+  local runtime="$1"
+  local dry_run="$2"
+  shift 2
+  ruby -ryaml -rjson -e '
+settings_path, config_path, runtime_name, dry_run, *model_ids = ARGV
+settings = JSON.parse(File.read(settings_path))
+rt = (settings["runtimes"] || {})[runtime_name] || {}
+prefix = rt["modelPrefix"].to_s
+prefix = "local-#{runtime_name}-" if prefix.empty?
+api_base = rt["apiBase"].to_s
+if api_base.empty?
+  warn "runtime #{runtime_name}: apiBase is required for discovered routes"
+  exit 1
+end
+
+default_info = rt["defaultModelInfo"] || {
+  "max_input_tokens" => 8192,
+  "max_output_tokens" => 4096,
+  "supports_reasoning" => false,
+  "x_input_confidence" => "owned-policy",
+  "x_input_source" => "quality-conservative-local-policy; runtime-specific",
+  "x_output_confidence" => "owned-policy",
+  "x_output_source" => "quality-conservative-local-policy",
+  "x_reasoning_confidence" => "owned-policy",
+  "x_reasoning_source" => "local-runtime-no-reasoning-routing"
+}
+
+start_marker = "# BEGIN ai-litellm discovered local routes"
+end_marker = "# END ai-litellm discovered local routes"
+original = File.read(config_path)
+
+clean_lines = []
+in_block = false
+original.each_line do |line|
+  if line.start_with?(start_marker)
+    in_block = true
+    next
+  end
+  if line.start_with?(end_marker)
+    in_block = false
+    next
+  end
+  clean_lines << line unless in_block
+end
+clean = clean_lines.join
+config = (YAML.load(clean, aliases: true) rescue YAML.load(clean))
+existing = Array(config["model_list"]).map { |entry| entry["model_name"] }.compact
+
+slug = lambda do |value|
+  value.to_s.downcase
+    .gsub(%r{\Aopenai/}, "")
+    .gsub(/[^a-z0-9._-]+/, "-")
+    .gsub(/\A[-.]+|[-.]+\z/, "")
+end
+scalar = lambda do |value|
+  YAML.dump(value).strip.sub(/\A---\s*/, "")
+end
+
+seen = {}
+routes = model_ids.map do |model_id|
+  next if model_id.to_s.empty?
+  route = "#{prefix}#{slug.call(model_id)}"
+  next if route == prefix || existing.include?(route) || seen[route]
+  seen[route] = true
+  [route, model_id]
+end.compact
+
+routes.each { |route, model_id| puts "  + #{route} -> openai/#{model_id}" }
+exit 0 if dry_run == "1"
+
+block = ""
+unless routes.empty?
+  block << "#{start_marker}\n"
+  block << "# Managed by `ai-litellm sync`; generated from runtimes.#{runtime_name} /v1/models.\n"
+  routes.each do |route, model_id|
+    block << "  - model_name: #{scalar.call(route)}\n"
+    block << "    litellm_params:\n"
+    block << "      model: #{scalar.call("openai/#{model_id}")}\n"
+    block << "      api_base: #{scalar.call(api_base)}\n"
+    block << "      api_key: none\n"
+    block << "    model_info:\n"
+    default_info.each do |key, value|
+      block << "      #{key}: #{scalar.call(value)}\n"
+    end
+  end
+  block << "#{end_marker}\n\n"
+end
+
+insert_at = clean_lines.index { |line| line =~ /\Ageneral_settings:\s*$/ }
+if insert_at.nil?
+  warn "Cannot find general_settings: insertion point in #{config_path}"
+  exit 1
+end
+
+next_lines = clean_lines.dup
+next_lines.insert(insert_at, block) unless block.empty?
+tmp = "#{config_path}.tmp.#{$$}"
+File.write(tmp, next_lines.join)
+File.rename(tmp, config_path)
+' "$AI_LITELLM_SETTINGS" "$AI_LITELLM_CONFIG" "$runtime" "$dry_run" "$@"
+}
+
+ai_litellm_runtime_routes_refresh() {
+  local dry_run="${1:-0}"
+  local failed=0 runtime
+  for runtime in "${(@f)$(ai_litellm_runtime_names 2>/dev/null)}"; do
+    [[ -n "$runtime" ]] || continue
+    ai_litellm_runtime_discovery_enabled "$runtime" || continue
+    if ! ai_litellm_runtime_reachable "$runtime"; then
+      echo "- runtime routes skipped: $runtime not reachable"
+      continue
+    fi
+    local -a available_models
+    available_models=("${(@f)$(ai_litellm_runtime_available_models "$runtime" 2>/dev/null)}")
+    available_models=("${(@)available_models:#}")
+    echo "- runtime routes: $runtime (${#available_models[@]} discovered)"
+    ai_litellm_runtime_routes_write "$runtime" "$dry_run" "${available_models[@]}" || failed=1
+  done
+  return $failed
+}
+
 # Regenerate every derived artifact from the single source and reload the proxy.
 # After editing a token limit in litellm_config.yaml, this is the one command to run.
 ai_litellm_sync() {
@@ -2272,6 +2575,8 @@ ai_litellm_sync() {
 
   echo "ai-litellm sync"
   (( dry_run )) && echo "- dry-run: no files will be changed and proxy will not restart"
+
+  ai_litellm_runtime_routes_refresh "$dry_run" || failed=1
 
   codex_command="$(ai_litellm_harness_json codex command 2>/dev/null || printf 'codex')"
   codex_wrapper="$AI_LITELLM_BIN_DIR/codex-litellm"
@@ -2377,11 +2682,23 @@ ai_litellm_doctor_runtime() {
   if ai_litellm_runtime_reachable "$runtime"; then
     echo "ok   runtime endpoint reachable"
     local model
-    local -a expected_models
+    local -a expected_models missing_models available_models
     expected_models=("${(@f)$(ai_litellm_runtime_expected_models "$runtime" 2>/dev/null)}")
+    expected_models=("${(@)expected_models:#}")
     for model in "${expected_models[@]}"; do
-      ai_litellm_doctor_check "runtime model available: $model" ai_litellm_runtime_model_available "$runtime" "$model" || failed=1
+      if ! ai_litellm_doctor_check "runtime model available: $model" ai_litellm_runtime_model_available "$runtime" "$model"; then
+        failed=1
+        missing_models+=("$model")
+      fi
     done
+    if (( ${#missing_models[@]} > 0 )); then
+      available_models=("${(@f)$(ai_litellm_runtime_available_models "$runtime" 2>/dev/null)}")
+      available_models=("${(@)available_models:#}")
+      if (( ${#available_models[@]} > 0 )); then
+        echo "Runtime advertises models:"
+        printf '  %s\n' "${available_models[@]}"
+      fi
+    fi
   else
     echo "fail runtime endpoint reachable"
     echo "hint start manually: $(ai_litellm_runtime_field "$runtime" startCommand 2>/dev/null || printf 'manual start')"
@@ -3391,6 +3708,7 @@ descriptor_paths(harness_dir).each do |path|
       selections << [entry["slug"], entry["slug"]] if entry["slug"]
     end
     registry.keys.grep(/^codex-/).each { |model| selections << [model, model] }
+    registry.keys.grep(/^local-/).each { |model| selections << [model, model] }
     seen = Set.new
     selections.each do |selection, model|
       next unless model && registry.key?(model)
@@ -3943,6 +4261,7 @@ def descriptor_selections(descriptor, registry)
       model = entry["slug"]
       rows << [model, model] if model
     end
+    registry.keys.grep(/^local-/).each { |model| rows << [model, model] }
   end
 
   Array(descriptor.dig("adapterConfig", "context", "selections")).each do |item|
@@ -4621,6 +4940,7 @@ def selections(descriptor, registry)
       model = entry["slug"]
       out << [model, model] if model
     end
+    registry.keys.grep(/^local-/).each { |model| out << [model, model] }
   end
   out.uniq.select { |_selection, model| model && registry.key?(model) }
 end
@@ -4957,7 +5277,7 @@ ai_litellm_cmd_key() {
   case "$verb" in
     status|"") ai_litellm_key_status ;;
     set)       ai_litellm_key_set "$@" ;;
-    *) echo "Usage: ai-litellm key status|set <openrouter|ENV_VAR|provider-name> [value]" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]" >&2; return 1 ;;
   esac
 }
 
@@ -5051,7 +5371,7 @@ Usage: ai-litellm <group> <verb> [args]
   Context:  ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
   Reason:   ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
   Audit:    ai-litellm audit model-policy
-  Key:      ai-litellm key status|set <openrouter|ENV_VAR|provider-name> [value]
+  Key:      ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]
   Sync:     ai-litellm sync          Regenerate derived configs + reload proxy from the single source
   Delete:   ai-litellm uninstall     Remove package directory and global shims
   Caps:     ai-litellm capabilities  Proxy + runtime capability summary

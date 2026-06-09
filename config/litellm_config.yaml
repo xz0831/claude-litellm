@@ -114,7 +114,8 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY
     model_info: *deepseek_v4_pro
 
-  # Local runtime-facing names. Runtime lifecycle is managed by ai-litellm metadata.
+  # Sample local runtime-facing route. Runtime lifecycle and machine-specific
+  # discovered local routes are managed by ai-litellm metadata/sync.
   - model_name: local-omlx-gemma4-12b
     litellm_params:
       model: openai/local-omlx-gemma4-12b

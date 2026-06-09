@@ -454,12 +454,15 @@ ai-litellm runtime doctor omlx
 ai-litellm capabilities
 ```
 
-runtime은 settings.json의 `runtimes.<name>` 블록으로 기술한다. `kind`가 readiness adapter를 결정하며(현재 `openai-compatible` — oMLX/exo/vLLM/Ollama(`/v1`) 공통, 미지원 kind는 loud-fail), `startCommandBinary`(없으면 `startCommand` 첫 단어)로 바이너리 존재를 점검한다. `ai-litellm proxy doctor`와 `ai-litellm runtime doctor`는 runtime 블록 유효성, registry 정합성(expectedModels ⊆ registry, prefix-매칭 모델의 `api_base` == runtime `apiBase`, 모든 `local-*` 모델이 어떤 runtime prefix에 속하는지), endpoint/port 충돌(다른 runtime·proxy와 겹치지 않는지)을 검사한다. Git은 route/config/runtime metadata만 추적한다. oMLX 바이너리, runtime process, `__HOME__/.omlx/models` 아래의 실제 model weights는 각 컴퓨터의 machine-local 준비물이다.
+runtime은 settings.json의 `runtimes.<name>` 블록으로 기술한다. `kind`가 readiness adapter를 결정하며(현재 `openai-compatible` — oMLX/exo/vLLM/Ollama(`/v1`) 공통, 미지원 kind는 loud-fail), `startCommandBinary`(없으면 `startCommand` 첫 단어)로 바이너리 존재를 점검한다. `ai-litellm proxy doctor`와 `ai-litellm runtime doctor`는 runtime 블록 유효성, registry 정합성(required `expectedModels`가 있으면 registry에 존재하는지, prefix-매칭 모델의 `api_base` == runtime `apiBase`, 모든 `local-*` 모델이 어떤 runtime prefix에 속하는지), endpoint/port 충돌(다른 runtime·proxy와 겹치지 않는지)을 검사한다. Git은 route/config/runtime metadata만 추적한다. oMLX 바이너리, runtime process, `__HOME__/.omlx/models` 아래의 실제 model weights는 각 컴퓨터의 machine-local 준비물이다.
+
+OpenRouter 모델은 curated recommendation으로 고정 alias를 둔다. 반대로 oMLX 모델은 컴퓨터마다 적합한 모델이 다르므로 `expectedModels`는 비어 있을 수 있고, `recommendedModels`는 샘플 route만 나타낸다. `discoverModels: true`인 runtime은 `ai-litellm sync` 때 `/v1/models`를 읽어 현재 컴퓨터가 실제 serving 중인 모델을 generated local route로 추가한다.
 
 runtime별 concrete model name은 충돌을 피하기 위해 prefix를 둔다.
 
 ```zsh
 local-omlx-gemma4-12b
+local-omlx-qwen3.5-9b-mlx-8bit
 ```
 
 `exo` 등 다른 runtime을 추가할 때도 같은 방식으로 `local-exo-*`처럼 별도 prefix를 쓴다. 같은 concrete local `model_name`을 여러 runtime에 중복 등록하지 않는다.
@@ -468,27 +471,37 @@ oMLX 모델 테스트:
 
 ```zsh
 curl http://127.0.0.1:8000/v1/models
-ai-litellm model info local-omlx-gemma4-12b
-claude-litellm local-omlx-gemma4-12b -p "Reply with exactly LOCAL_OK" --no-session-persistence --tools ""
-codex-litellm local-omlx-gemma4-12b exec --skip-git-repo-check --sandbox read-only "Reply with exactly LOCAL_OK"
-goose-litellm local-omlx-gemma4-12b run --no-session --no-profile -q --max-turns 1 -t "Reply with exactly LOCAL_OK"
-opencode-litellm local-omlx-gemma4-12b run --agent plan --format json "Reply with exactly LOCAL_OK"
+ai-litellm sync
+ai-litellm model list | grep '^  local-omlx-'
+ai-litellm model info local-omlx-qwen3.5-9b-mlx-8bit
+claude-litellm local-omlx-qwen3.5-9b-mlx-8bit -p "Reply with exactly LOCAL_OK" --no-session-persistence --tools ""
+codex-litellm local-omlx-qwen3.5-9b-mlx-8bit exec --skip-git-repo-check --sandbox read-only "Reply with exactly LOCAL_OK"
+goose-litellm local-omlx-qwen3.5-9b-mlx-8bit run --no-session --no-profile -q --max-turns 1 -t "Reply with exactly LOCAL_OK"
+opencode-litellm local-omlx-qwen3.5-9b-mlx-8bit run --agent plan --format json "Reply with exactly LOCAL_OK"
 ```
 
 ## Secret 관리
 
 설정 파일에는 API key를 평문으로 두지 않는다.
 
-기본 first-use path:
+macOS 권장 first-use path:
 
 ```zsh
-ai-litellm key set openrouter
+ai-litellm key set --keychain openrouter
 ai-litellm key status
 ```
 
-이 명령은 secret을 `__FABRIC_HOME__/state/ai-litellm/env`에 `0600`으로 저장한다. package 삭제 시 이 private env file도 함께 제거된다. `scripts/install.zsh`는 `LITELLM_MASTER_KEY`가 환경변수/env-file/Keychain에 없으면 자동으로 local master key를 생성해 같은 env file에 저장한다.
+값 인자를 생략하면 숨은 입력으로 받는다. secret을 명령 인자로 넘기면 셸 히스토리나 프로세스 검사 도구에 남을 수 있으므로 피한다.
 
-Keychain도 계속 지원한다:
+private env file도 지원한다:
+
+```zsh
+ai-litellm key set --env-file openrouter
+```
+
+이 방식은 secret을 `__FABRIC_HOME__/state/ai-litellm/env`에 `0600`으로 저장한다. package 삭제 시 이 private env file도 함께 제거된다. `scripts/install.zsh`는 `LITELLM_MASTER_KEY`가 환경변수/env-file/Keychain에 없으면 자동으로 local master key를 생성해 같은 env file에 저장한다.
+
+Keychain service 기본값:
 
 - OpenRouter API key: service `openrouter-api-key`
 - LiteLLM master key: service `litellm-master-key`
@@ -508,13 +521,14 @@ security find-generic-password -s brave-search-api-key -a "$USER" >/dev/null && 
 - Claude/Codex settings 파일에 provider API key 저장
 - Codex `shell_environment_policy.set`에 API key 저장
 
-`ai-litellm` shared library는 private env file 또는 Keychain에서 secret을 읽되, 현재 셸에 export하지 않는다. 필요한 subprocess에만 환경변수로 주입한다.
+`ai-litellm` shared library는 private env file 또는 Keychain에서 secret을 읽되, 현재 셸에 export하지 않는다. 필요한 subprocess에만 환경변수로 주입한다. LiteLLM proxy가 실행되는 동안에는 `os.environ/...` 설정을 만족시키기 위해 해당 proxy 프로세스 환경에 provider key와 master key가 존재한다.
 
 ### Multi-provider secret 주입
 
 `litellm_config.yaml`이 참조하는 **모든** `os.environ/<VAR>`(OpenRouter뿐 아니라 OpenAI/Anthropic/Gemini 등 직결 provider 포함)는 proxy 기동 시 자동으로 resolve되어 proxy subprocess에만 주입된다. 셸 export는 필요 없다(오히려 `ai-litellm proxy doctor`가 export를 안티패턴으로 경고).
 
-- `ai-litellm key set OPENAI_API_KEY` 또는 `ai-litellm key set openai`처럼 env var 또는 provider-name으로 private env file에 저장할 수 있다.
+- `ai-litellm key set --keychain OPENAI_API_KEY` 또는 `ai-litellm key set --keychain openai`처럼 env var 또는 provider-name으로 Keychain에 저장할 수 있다.
+- `--env-file`을 쓰면 private env file에 저장한다.
 - 기본 Keychain service 이름은 변수명을 소문자-하이픈으로 변환한 형태다. 예: `OPENAI_API_KEY` → service `openai-api-key`, `ANTHROPIC_API_KEY` → `anthropic-api-key`, account `$USER`.
 - 다른 service/account를 쓰려면 `settings.json`의 `secrets.<VAR>.{keychainService,keychainAccount}`로 override한다.
 - registry가 참조하는 key가 Keychain/env-file에 없으면 기동 시 `warn`을 내고, `proxy doctor`가 `provider key available: <VAR>`로 FAIL 처리한다.

@@ -123,26 +123,29 @@ If migrating from an older spread-out install, preview legacy cleanup first:
 
 ## Secrets
 
-Store keys outside git. The simple first-use path stores secrets in the package's
-private env file, which is removed with `ai-litellm uninstall`:
+Store keys outside git. On macOS, prefer Keychain storage so provider keys do
+not live in the package directory:
 
 ```zsh
-ai-litellm key set openrouter
+ai-litellm key set --keychain openrouter
 ai-litellm key status
 ```
 
 You can also set arbitrary provider env keys:
 
 ```zsh
-ai-litellm key set OPENAI_API_KEY
-ai-litellm key set anthropic
+ai-litellm key set --keychain OPENAI_API_KEY
+ai-litellm key set --keychain anthropic
 ```
 
-Advanced macOS Keychain entries are still supported:
+Omit the value and enter it at the hidden prompt. Passing a secret as a command
+argument can leave it in shell history or process inspection output.
+
+For throwaway or non-macOS installs, the package also supports a private env
+file, which is removed with `ai-litellm uninstall`:
 
 ```zsh
-security add-generic-password -U -s openrouter-api-key -a "$USER" -w '...'
-security add-generic-password -U -s litellm-master-key -a "$USER" -w '...'
+ai-litellm key set --env-file openrouter
 ```
 
 For additional providers referenced as `os.environ/NAME` in
@@ -153,7 +156,7 @@ dash form of the variable name. Example: `OPENAI_API_KEY` uses service
 ## First Run
 
 ```zsh
-ai-litellm key set openrouter
+ai-litellm key set --keychain openrouter
 ai-litellm key status
 ai-litellm sync
 ai-litellm context doctor
@@ -196,11 +199,22 @@ Those harness smoke tests make real provider requests and may be billable.
 
 ## Local Models
 
-The repository tracks only local runtime wiring, not model weights. For example,
-`local-omlx-gemma4-12b` is a LiteLLM route to `http://127.0.0.1:8000/v1` plus
-runtime metadata for oMLX. The actual oMLX installation and files under
-`~/.omlx/models` remain machine-local and must be prepared separately on each
-computer that wants to run that route.
+The repository tracks local runtime wiring, not model weights. OpenRouter routes
+are curated recommendations, but local oMLX models are machine-specific.
+
+`local-omlx-gemma4-12b` remains a sample/recommended route. When oMLX is running,
+`ai-litellm sync` also reads `http://127.0.0.1:8000/v1/models` and generates
+routes for the models this computer actually serves, such as:
+
+```zsh
+ai-litellm runtime status omlx
+ai-litellm sync
+ai-litellm model list | grep '^  local-omlx-'
+```
+
+Generated local routes use the `local-omlx-...` prefix and point at the exact
+runtime model id advertised by oMLX. The actual oMLX installation and files
+under `~/.omlx/models` remain machine-local.
 
 ## Token Budget Policy
 

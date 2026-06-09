@@ -3,6 +3,7 @@
 set -euo pipefail
 
 repo_root="${0:A:h:h}"
+real_home="$HOME"
 
 for file in \
   "$repo_root/scripts/install.zsh" \
@@ -37,7 +38,7 @@ tmp_home="$(mktemp -d)"
 spaced_home="$(mktemp -d)"
 trap 'rm -rf "$tmp_home" "$spaced_home"' EXIT
 LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-$$" HOME="$tmp_home" "$repo_root/scripts/install.zsh" >/dev/null
-HOME="$tmp_home" zsh -fc '
+REAL_HOME="$real_home" HOME="$tmp_home" zsh -fc '
 prefix="$HOME/.local/share/ai-litellm-fabric"
 test -f "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/lib.zsh"
 test -f "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/context-observations.json"
@@ -151,10 +152,16 @@ ai_litellm_render_opencode_config opencode
 test "$(stat -f %Lp "$prefix/state")" = "700"
 test "$(stat -f %Lp "$prefix/state/ai-litellm")" = "700"
 test "$(stat -f %Lp "$prefix/state/opencode-litellm/opencode.json")" = "600"
-"$HOME/.local/bin/ai-litellm" key set openrouter "PLACEHOLDER\$(touch $HOME/PWNED)END" >/dev/null
+"$HOME/.local/bin/ai-litellm" key set openrouter "PLACEHOLDER\$(touch $HOME/PWNED)END" >/dev/null 2>/dev/null
 test "$(ai_litellm_env_value OPENROUTER_API_KEY)" = "PLACEHOLDER\$(touch $HOME/PWNED)END"
 test -n "$(ai_litellm_env_value LITELLM_MASTER_KEY)"
 test ! -e "$HOME/PWNED"
+if command -v security >/dev/null 2>&1; then
+  keychain_service="ai-litellm-check-openrouter-$$"
+  REAL_HOME="${REAL_HOME:?}" HOME="$REAL_HOME" OPENROUTER_KEYCHAIN_SERVICE="$keychain_service" "$prefix/bin/ai-litellm" key set --keychain openrouter "PLACEHOLDER_KEYCHAIN" >/dev/null 2>/dev/null
+  test "$(HOME="$REAL_HOME" security find-generic-password -s "$keychain_service" -a "$USER" -w)" = "PLACEHOLDER_KEYCHAIN"
+  HOME="$REAL_HOME" security delete-generic-password -s "$keychain_service" -a "$USER" >/dev/null 2>&1
+fi
 "$HOME/.local/bin/ai-litellm" uninstall --dry-run >/dev/null
 sleep 60 &
 foreign_pid=$!

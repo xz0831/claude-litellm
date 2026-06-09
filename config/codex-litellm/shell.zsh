@@ -260,6 +260,34 @@ codex-litellm-refresh-catalog() {
   descriptor="$(ai_litellm_harness_descriptor "$CODEX_LITELLM_HARNESS")" || return 1
   local codex_command
   codex_command="$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" command 2>/dev/null || printf 'codex')"
+  local local_catalog_json
+  local_catalog_json="$(ruby -ryaml -rjson -e '
+registry = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
+descriptor = JSON.parse(File.read(ARGV[1]))
+configured = Array(descriptor.dig("models", "localCatalogEntries"))
+entries = []
+seen = {}
+configured.each do |entry|
+  next unless entry["slug"]
+  entries << entry
+  seen[entry["slug"]] = true
+end
+Array(registry["model_list"]).each do |entry|
+  slug = entry["model_name"].to_s
+  next unless slug.start_with?("local-")
+  next if seen[slug]
+  backend = entry.dig("litellm_params", "model").to_s.sub(%r{\Aopenai/}, "")
+  entries << {
+    "slug" => slug,
+    "displayName" => slug,
+    "description" => "Local model #{backend} served through LiteLLM.",
+    "priority" => 80,
+    "defaultReasoningLevel" => "low"
+  }
+  seen[slug] = true
+end
+puts JSON.generate(entries)
+' "$AI_LITELLM_CONFIG" "$descriptor")" || return 1
 
   # Codex has no reliable request-body output cap, so catalog context windows
   # are shaped to the safe input budget derived from the descriptor reservation
@@ -273,6 +301,7 @@ codex-litellm-refresh-catalog() {
 const fs = require("fs");
 const descriptor = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 const catalogContext = JSON.parse(process.argv[2] || "{}");
+const entries = JSON.parse(process.argv[3] || "[]");
 const catalog = JSON.parse(fs.readFileSync(0, "utf8"));
 catalog.models = (catalog.models || []).map((model) => {
   const next = {...model, supports_search_tool: false};
@@ -280,7 +309,6 @@ catalog.models = (catalog.models || []).map((model) => {
   delete next.web_search_tool_type;
   return next;
 });
-const entries = descriptor.models?.localCatalogEntries || [];
 const localSlugs = new Set(entries.map((entry) => entry.slug));
 catalog.models = catalog.models.filter((model) => !localSlugs.has(model.slug));
 const baseSlug = descriptor.models?.catalogBaseSlug || "gpt-5.4-mini";
@@ -313,7 +341,7 @@ catalog.models = catalog.models.map((model) => {
   return { ...model, context_window: ctx, max_context_window: ctx, auto_compact_token_limit: null };
 });
 process.stdout.write(JSON.stringify(catalog, null, 2) + "\n");
-' "$descriptor" "$catalog_context_json" > "$tmp" || {
+	' "$descriptor" "$catalog_context_json" "$local_catalog_json" > "$tmp" || {
       rm -f "$tmp"
       return 1
     }
