@@ -61,6 +61,10 @@
     "emptyApiKeyEnv": "ANTHROPIC_API_KEY",
     "subagentModelEnv": "CLAUDE_CODE_SUBAGENT_MODEL",
     "fastModeOrgCheckEnv": "CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK",
+    "generatedSettings": {
+      "enableWorkflows": true,
+      "skipWorkflowUsageWarning": true
+    },
     "discoveryEnv": "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
     "baseUrlEnv": "ANTHROPIC_BASE_URL",
     "tierModelEnvPrefix": "ANTHROPIC_DEFAULT",

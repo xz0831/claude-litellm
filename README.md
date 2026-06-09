@@ -192,8 +192,7 @@ Then test one harness. Claude Code defaults to the thin OpenRouter direct path
 documented by OpenRouter for Claude Code: `ANTHROPIC_BASE_URL` is
 `https://openrouter.ai/api`, the OpenRouter key is injected as
 `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_API_KEY` is explicitly blanked to avoid
-auth conflicts. The default direct tier is `sonnet`; use `opus` explicitly for
-the higher-cost Opus tier.
+auth conflicts. The default direct tier is `opus`.
 
 ```zsh
 claude-litellm sonnet -p 'Reply with exactly OK' --no-session-persistence --tools ''

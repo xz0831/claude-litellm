@@ -1,7 +1,7 @@
 {
   "mode": "direct",
-  "default": "sonnet",
-  "directDefault": "sonnet",
+  "default": "opus",
+  "directDefault": "opus",
   "proxyDefault": "opus",
   "directAliases": {
     "opus": "~anthropic/claude-opus-latest",

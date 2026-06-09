@@ -20,7 +20,7 @@ provider/model registry에 대해서는 두 가지 source of truth만 둔다.
 - **LiteLLM 모델 라우팅**: package config의 `litellm_config.yaml` `model_list` (surface model_name → underlying provider model).
 - **모델별 토큰 한도(context window / max output)**: 같은 파일의 `x-limits:` YAML 앵커. underlying 모델당 앵커 1개, surface 엔트리는 `model_info: *alias`로 참조한다. 앵커 한 줄을 고치면 모든 harness 설정이 파생된다([토큰 한도 / Context Window 관리](#토큰-한도--context-window-관리) 참조).
 
-Claude direct 경로는 OpenRouter의 Anthropic-compatible API를 직접 본다. 런처는 `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, `ANTHROPIC_AUTH_TOKEN=<OpenRouter key>`, `ANTHROPIC_API_KEY=`를 subprocess에만 주입하고, `ANTHROPIC_DEFAULT_*_MODEL`을 `directAliases`에서 파생한다. 기본 direct tier는 비용과 Claude Code 일상 작업 적합성을 고려해 `sonnet`이다. 이 경로에서는 local LiteLLM proxy를 시작하지 않고 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`/`CLAUDE_CODE_AUTO_COMPACT_WINDOW`도 주입하지 않는다.
+Claude direct 경로는 OpenRouter의 Anthropic-compatible API를 직접 본다. 런처는 `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, `ANTHROPIC_AUTH_TOKEN=<OpenRouter key>`, `ANTHROPIC_API_KEY=`를 subprocess에만 주입하고, `ANTHROPIC_DEFAULT_*_MODEL`을 `directAliases`에서 파생한다. 기본 direct tier는 `opus`다. 이 경로에서는 local LiteLLM proxy를 시작하지 않고 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`/`CLAUDE_CODE_AUTO_COMPACT_WINDOW`도 주입하지 않는다.
 
 Claude proxy fallback의 매 요청 출력 예약은 모델 능력치가 아니므로 `x-limits`에 넣지 않는다. Claude harness adapter 정책(`__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation`)에서 별도로 관리하고, proxy 경로 런처가 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`와 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 여기서 파생한다.
 

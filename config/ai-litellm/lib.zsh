@@ -919,9 +919,24 @@ ai_litellm_ensure_claude_settings_file() {
 
 ai_litellm_render_claude_settings() {
   local harness="${1:-claude}"
-  local settings_path
+  local settings_path defaults tmp
   settings_path="$(ai_litellm_harness_json "$harness" paths.settingsArg)" || return 1
-  ai_litellm_ensure_claude_settings_file "$settings_path"
+  ai_litellm_ensure_claude_settings_file "$settings_path" || return $?
+
+  defaults="$(ai_litellm_harness_json "$harness" adapterConfig.generatedSettings 2>/dev/null || true)"
+  [[ -n "$defaults" ]] || return 0
+
+  tmp="${settings_path}.$$"
+  jq --argjson defaults "$defaults" '
+    reduce ($defaults | keys_unsorted[]) as $key (.;
+      if has($key) then . else .[$key] = $defaults[$key] end
+    )
+  ' "$settings_path" >| "$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv "$tmp" "$settings_path"
 }
 
 ai_litellm_cli_arg_present() {

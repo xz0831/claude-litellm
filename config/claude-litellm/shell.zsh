@@ -48,7 +48,7 @@ _claude_litellm_direct_model_like() {
 }
 
 _claude_litellm_direct_default_request() {
-  _claude_litellm_json directDefault 2>/dev/null || _claude_litellm_json default 2>/dev/null || printf 'sonnet\n'
+  _claude_litellm_json directDefault 2>/dev/null || _claude_litellm_json default 2>/dev/null || printf 'opus\n'
 }
 
 _claude_litellm_proxy_default_request() {
