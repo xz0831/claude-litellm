@@ -1,4 +1,5 @@
-# Claude Code through the shared local LiteLLM gateway.
+# Claude Code through OpenRouter's Anthropic-compatible endpoint by default,
+# with a LiteLLM proxy fallback for local and non-Claude routes.
 
 if ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}/config/ai-litellm/lib.zsh" ]]; then
   source "${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}/config/ai-litellm/lib.zsh"
@@ -28,10 +29,64 @@ _claude_litellm_is_tier() {
   _claude_litellm_tiers | grep -Fx -- "$candidate" >/dev/null
 }
 
+_claude_litellm_default_mode() {
+  local mode
+  mode="${CLAUDE_LITELLM_MODE:-$(_claude_litellm_json mode 2>/dev/null || printf 'direct')}"
+  case "$mode" in
+    direct|openrouter|openrouter-direct) printf 'direct\n' ;;
+    proxy|litellm|litellm-proxy) printf 'proxy\n' ;;
+    *)
+      echo "Unknown claude-litellm mode: $mode" >&2
+      return 1
+      ;;
+  esac
+}
+
+_claude_litellm_direct_model_like() {
+  local candidate="$1"
+  [[ "$candidate" == "~"* || "$candidate" == */* || "$candidate" == anthropic:* ]]
+}
+
+_claude_litellm_direct_default_request() {
+  _claude_litellm_json directDefault 2>/dev/null || _claude_litellm_json default 2>/dev/null || printf 'sonnet\n'
+}
+
+_claude_litellm_proxy_default_request() {
+  _claude_litellm_json proxyDefault 2>/dev/null || _claude_litellm_json default 2>/dev/null || printf 'sonnet\n'
+}
+
+_claude_litellm_direct_model_for_request() {
+  local requested="$1"
+  if [[ -z "$requested" ]]; then
+    requested="$(_claude_litellm_direct_default_request)"
+  fi
+
+  if _claude_litellm_is_tier "$requested"; then
+    _claude_litellm_json "directAliases.$requested" 2>/dev/null
+    return $?
+  fi
+
+  printf '%s\n' "$requested"
+}
+
+_claude_litellm_direct_model_arg_for_request() {
+  local requested="$1"
+  if [[ -z "$requested" ]]; then
+    requested="$(_claude_litellm_direct_default_request)"
+  fi
+
+  if _claude_litellm_is_tier "$requested"; then
+    printf '%s\n' "$requested"
+    return 0
+  fi
+
+  printf '%s\n' "$requested"
+}
+
 _claude_litellm_target_model_for_request() {
   local requested="$1"
   if [[ -z "$requested" ]]; then
-    requested="$(_claude_litellm_json default 2>/dev/null || printf 'sonnet')"
+    requested="$(_claude_litellm_proxy_default_request)"
   fi
 
   if _claude_litellm_is_tier "$requested"; then
@@ -50,7 +105,7 @@ _claude_litellm_target_model_for_request() {
 _claude_litellm_resolve_model_arg() {
   local requested="$1"
   if [[ -z "$requested" ]]; then
-    requested="$(_claude_litellm_json default 2>/dev/null || printf 'sonnet')"
+    requested="$(_claude_litellm_proxy_default_request)"
   fi
 
   if _claude_litellm_is_tier "$requested"; then
@@ -81,18 +136,188 @@ claude-litellm-restart() {
 claude-litellm-status() {
   echo "Claude settings: $CLAUDE_LITELLM_SETTINGS"
   echo "Claude config:   $CLAUDE_LITELLM_CLAUDE_CONFIG"
+  echo "Claude mode:     $(_claude_litellm_default_mode 2>/dev/null || printf 'unknown')"
+  echo "Direct base URL: $(ai_litellm_harness_template_json "$CLAUDE_LITELLM_HARNESS" provider.baseUrl 2>/dev/null || printf 'https://openrouter.ai/api')"
   ai_litellm_status
 }
 
 claude-litellm-list() {
-  echo "Claude aliases:"
-  echo "  default -> $(_claude_litellm_json default 2>/dev/null || printf 'sonnet')"
+  echo "Claude direct aliases:"
+  echo "  default -> $(_claude_litellm_direct_default_request)"
   local tier
+  _claude_litellm_tiers | while IFS= read -r tier; do
+    printf '  %-7s -> %s\n' "$tier" "$(_claude_litellm_json "directAliases.$tier" 2>/dev/null || true)"
+  done
+  echo
+  echo "Claude proxy aliases:"
+  echo "  default -> $(_claude_litellm_proxy_default_request)"
   _claude_litellm_tiers | while IFS= read -r tier; do
     printf '  %-7s -> %s\n' "$tier" "$(_claude_litellm_json "aliases.$tier" 2>/dev/null || true)"
   done
   echo
   ai_litellm_list
+}
+
+_claude_litellm_reasoning_args() {
+  local harness_effort
+  harness_effort="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.reasoning.effort 2>/dev/null || true)"
+  if [[ -n "$harness_effort" && "$harness_effort" != "auto" && "$harness_effort" != "none" ]]; then
+    if ! ai_litellm_cli_arg_present --effort "$@"; then
+      printf '%s\n%s\n' --effort "$harness_effort"
+    fi
+  fi
+}
+
+_claude_litellm_launch_proxy() {
+  local requested="$1"
+  shift
+  local claude_model_arg
+  local target_model
+  target_model="$(_claude_litellm_target_model_for_request "$requested")" || {
+    echo "Unknown claude-litellm proxy alias, LiteLLM model_name, or provider model: ${requested:-$(_claude_litellm_proxy_default_request)}" >&2
+    return 1
+  }
+  claude_model_arg="$(_claude_litellm_resolve_model_arg "$requested")" || {
+    echo "Unknown claude-litellm proxy alias, LiteLLM model_name, or provider model: ${requested:-$(_claude_litellm_proxy_default_request)}" >&2
+    return 1
+  }
+
+  ai_litellm_model_runtime_ready "$target_model" || return $?
+  ai_litellm_start >/dev/null || return $?
+  ai_litellm_ensure_claude_settings_file "$CLAUDE_LITELLM_SETTINGS_ARG" || return $?
+
+  local master_key
+  master_key="$(ai_litellm_master_key)"
+
+  if [[ -z "$master_key" ]]; then
+    echo "Missing LiteLLM master key." >&2
+    return 1
+  fi
+
+  local claude_command
+  claude_command="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" command 2>/dev/null || printf 'claude')"
+
+  local base_url_env auth_env discovery_env isolation_env tier_model_prefix tier_display_prefix
+  local auto_compact_window_env max_output_tokens_env empty_api_key_env
+  base_url_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.baseUrlEnv 2>/dev/null || printf 'ANTHROPIC_BASE_URL')"
+  auth_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" provider.auth.env 2>/dev/null || printf 'ANTHROPIC_AUTH_TOKEN')"
+  empty_api_key_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.emptyApiKeyEnv 2>/dev/null || printf 'ANTHROPIC_API_KEY')"
+  discovery_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.discoveryEnv 2>/dev/null || printf 'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY')"
+  isolation_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" isolation.env 2>/dev/null || printf 'CLAUDE_CONFIG_DIR')"
+  tier_model_prefix="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.tierModelEnvPrefix 2>/dev/null || printf 'ANTHROPIC_DEFAULT')"
+  tier_display_prefix="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.tierDisplayNameEnvPrefix 2>/dev/null || printf 'ANTHROPIC_DEFAULT')"
+  auto_compact_window_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.autoCompactWindowEnv 2>/dev/null || printf 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')"
+  max_output_tokens_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.maxOutputTokensEnv 2>/dev/null || printf 'CLAUDE_CODE_MAX_OUTPUT_TOKENS')"
+
+  local -a env_assignments
+  env_assignments=(
+    "$base_url_env=$(ai_litellm_base_url)"
+    "$auth_env=$master_key"
+    "$empty_api_key_env="
+    "$discovery_env=1"
+    "$isolation_env=$CLAUDE_LITELLM_CLAUDE_CONFIG"
+  )
+
+  local tier tier_upper tier_model tier_display
+  local -a tiers
+  tiers=("${(@f)$(_claude_litellm_tiers)}")
+  for tier in "${tiers[@]}"; do
+    tier_upper="${tier:u}"
+    tier_model="$(_claude_litellm_json "aliases.$tier" 2>/dev/null || true)"
+    tier_display="$(_claude_litellm_json "displayNames.$tier" 2>/dev/null || printf '%s via LiteLLM' "$tier_upper")"
+    env_assignments+=(
+      "${tier_model_prefix}_${tier_upper}_MODEL=$tier_model"
+      "${tier_display_prefix}_${tier_upper}_MODEL_NAME=$tier_display"
+    )
+  done
+
+  # Claude Code exposes process-global knobs for compact threshold and request
+  # max_tokens. Shared-window providers count input + reserved output together,
+  # so we inject a small reservation rather than the model's output capability.
+  local active_budget active_effective_input active_reservation
+  active_budget="$(ai_litellm_harness_output_budget "$CLAUDE_LITELLM_HARNESS" "$claude_model_arg" "$target_model" 2>/dev/null || true)"
+  if [[ -n "$active_budget" ]]; then
+    active_effective_input="$(print -r -- "$active_budget" | jq -r '.effectiveInput // empty')"
+    active_reservation="$(print -r -- "$active_budget" | jq -r '.reservation // empty')"
+    [[ -n "$active_effective_input" ]] && env_assignments+=("${auto_compact_window_env}=$active_effective_input")
+    [[ -n "$active_reservation" ]] && env_assignments+=("${max_output_tokens_env}=$active_reservation")
+  fi
+
+  local reasoning_output
+  local -a claude_extra_args
+  reasoning_output="$(_claude_litellm_reasoning_args "$@")"
+  [[ -n "$reasoning_output" ]] && claude_extra_args=("${(@f)reasoning_output}")
+
+  ai_litellm_harness_exec_env "$CLAUDE_LITELLM_HARNESS" "${env_assignments[@]}" -- \
+    "$claude_command" --settings "$CLAUDE_LITELLM_SETTINGS_ARG" --model "$claude_model_arg" "${claude_extra_args[@]}" "$@"
+}
+
+_claude_litellm_launch_direct() {
+  local requested="$1"
+  shift
+
+  local target_model claude_model_arg
+  target_model="$(_claude_litellm_direct_model_for_request "$requested")" || {
+    echo "Unknown claude-litellm direct alias: ${requested:-$(_claude_litellm_direct_default_request)}" >&2
+    return 1
+  }
+  claude_model_arg="$(_claude_litellm_direct_model_arg_for_request "$requested")" || return $?
+
+  ai_litellm_ensure_claude_settings_file "$CLAUDE_LITELLM_SETTINGS_ARG" || return $?
+
+  local openrouter_key
+  openrouter_key="$(ai_litellm_openrouter_key 2>/dev/null)" || {
+    echo "Missing OpenRouter API key. Run: ai-litellm key set --keychain openrouter" >&2
+    return 1
+  }
+
+  local claude_command
+  claude_command="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" command 2>/dev/null || printf 'claude')"
+
+  local base_url_env auth_env empty_api_key_env discovery_env isolation_env tier_model_prefix tier_display_prefix
+  local subagent_model_env fast_mode_org_check_env
+  base_url_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.baseUrlEnv 2>/dev/null || printf 'ANTHROPIC_BASE_URL')"
+  auth_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" provider.auth.env 2>/dev/null || printf 'ANTHROPIC_AUTH_TOKEN')"
+  empty_api_key_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.emptyApiKeyEnv 2>/dev/null || printf 'ANTHROPIC_API_KEY')"
+  discovery_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.discoveryEnv 2>/dev/null || printf 'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY')"
+  isolation_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" isolation.env 2>/dev/null || printf 'CLAUDE_CONFIG_DIR')"
+  tier_model_prefix="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.tierModelEnvPrefix 2>/dev/null || printf 'ANTHROPIC_DEFAULT')"
+  tier_display_prefix="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.tierDisplayNameEnvPrefix 2>/dev/null || printf 'ANTHROPIC_DEFAULT')"
+  subagent_model_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.subagentModelEnv 2>/dev/null || printf 'CLAUDE_CODE_SUBAGENT_MODEL')"
+  fast_mode_org_check_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.fastModeOrgCheckEnv 2>/dev/null || printf 'CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK')"
+
+  local -a env_assignments
+  env_assignments=(
+    "$base_url_env=$(ai_litellm_harness_template_json "$CLAUDE_LITELLM_HARNESS" provider.baseUrl 2>/dev/null || printf 'https://openrouter.ai/api')"
+    "$auth_env=$openrouter_key"
+    "$empty_api_key_env="
+    "$discovery_env=0"
+    "$isolation_env=$CLAUDE_LITELLM_CLAUDE_CONFIG"
+    "$fast_mode_org_check_env=1"
+  )
+
+  local tier tier_upper tier_model tier_display
+  local -a tiers
+  tiers=("${(@f)$(_claude_litellm_tiers)}")
+  for tier in "${tiers[@]}"; do
+    tier_upper="${tier:u}"
+    tier_model="$(_claude_litellm_json "directAliases.$tier" 2>/dev/null || true)"
+    tier_display="$(_claude_litellm_json "directDisplayNames.$tier" 2>/dev/null || printf '%s via OpenRouter' "$tier_upper")"
+    [[ -n "$tier_model" ]] && env_assignments+=("${tier_model_prefix}_${tier_upper}_MODEL=$tier_model")
+    [[ -n "$tier_display" ]] && env_assignments+=("${tier_display_prefix}_${tier_upper}_MODEL_NAME=$tier_display")
+  done
+
+  local subagent_model
+  subagent_model="$(_claude_litellm_json subagentModel 2>/dev/null || _claude_litellm_json directAliases.opus 2>/dev/null || true)"
+  [[ -n "$subagent_model" ]] && env_assignments+=("$subagent_model_env=$subagent_model")
+
+  local reasoning_output
+  local -a claude_extra_args
+  reasoning_output="$(_claude_litellm_reasoning_args "$@")"
+  [[ -n "$reasoning_output" ]] && claude_extra_args=("${(@f)reasoning_output}")
+
+  ai_litellm_harness_exec_env "$CLAUDE_LITELLM_HARNESS" "${env_assignments[@]}" -- \
+    "$claude_command" --settings "$CLAUDE_LITELLM_SETTINGS_ARG" --model "$claude_model_arg" "${claude_extra_args[@]}" "$@"
 }
 
 claude-litellm() {
@@ -103,8 +328,9 @@ claude-litellm() {
 
   case "$1" in
     -h|--help)
-      echo "Usage: claude-litellm [opus|sonnet|haiku|model_name|provider_model] [claude args...]"
+      echo "Usage: claude-litellm [--direct|--proxy] [opus|sonnet|haiku|model_name|provider_model] [claude args...]"
       echo "       claude-litellm --list|--status   (harness-specific info)"
+      echo "Default: OpenRouter Anthropic-compatible direct mode; use --proxy for LiteLLM/local routes."
       echo "Reasoning defaults: ai-litellm harness reasoning [set|unset] claude"
       echo "Proxy lifecycle moved to: ai-litellm proxy start|stop|restart|logs|doctor"
       return 0
@@ -146,93 +372,72 @@ claude-litellm() {
       ;;
   esac
 
-  local requested=""
-  if [[ -n "${1:-}" && "$1" != -* ]] && _claude_litellm_resolve_model_arg "$1" >/dev/null 2>&1; then
-    requested="$1"
-    shift
-  fi
-
-  local claude_model_arg
-  local target_model
-  target_model="$(_claude_litellm_target_model_for_request "$requested")" || {
-    echo "Unknown claude-litellm alias, LiteLLM model_name, or provider model: ${requested:-$(_claude_litellm_json default 2>/dev/null || printf 'sonnet')}" >&2
-    return 1
-  }
-  claude_model_arg="$(_claude_litellm_resolve_model_arg "$requested")" || {
-    echo "Unknown claude-litellm alias, LiteLLM model_name, or provider model: ${requested:-$(_claude_litellm_json default 2>/dev/null || printf 'sonnet')}" >&2
-    return 1
-  }
-
-  ai_litellm_model_runtime_ready "$target_model" || return $?
-  ai_litellm_start >/dev/null || return $?
-  ai_litellm_ensure_claude_settings_file "$CLAUDE_LITELLM_SETTINGS_ARG" || return $?
-
-  local master_key
-  master_key="$(ai_litellm_master_key)"
-
-  if [[ -z "$master_key" ]]; then
-    echo "Missing LiteLLM master key." >&2
-    return 1
-  fi
-
-  local claude_command
-  claude_command="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" command 2>/dev/null || printf 'claude')"
-
-  local base_url_env auth_env discovery_env isolation_env tier_model_prefix tier_display_prefix
-  local auto_compact_window_env max_output_tokens_env
-  base_url_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.baseUrlEnv 2>/dev/null || printf 'ANTHROPIC_BASE_URL')"
-  auth_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" provider.auth.env 2>/dev/null || printf 'ANTHROPIC_AUTH_TOKEN')"
-  discovery_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.discoveryEnv 2>/dev/null || printf 'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY')"
-  isolation_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" isolation.env 2>/dev/null || printf 'CLAUDE_CONFIG_DIR')"
-  tier_model_prefix="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.tierModelEnvPrefix 2>/dev/null || printf 'ANTHROPIC_DEFAULT')"
-  tier_display_prefix="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.tierDisplayNameEnvPrefix 2>/dev/null || printf 'ANTHROPIC_DEFAULT')"
-  auto_compact_window_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.autoCompactWindowEnv 2>/dev/null || printf 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')"
-  max_output_tokens_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.maxOutputTokensEnv 2>/dev/null || printf 'CLAUDE_CODE_MAX_OUTPUT_TOKENS')"
-
-  local -a env_assignments
-  env_assignments=(
-    "$base_url_env=$(ai_litellm_harness_template_json "$CLAUDE_LITELLM_HARNESS" provider.baseUrl 2>/dev/null || ai_litellm_base_url)"
-    "$auth_env=$master_key"
-    "$discovery_env=1"
-    "$isolation_env=$CLAUDE_LITELLM_CLAUDE_CONFIG"
-  )
-
-  local tier tier_upper tier_model tier_display
-  local -a tiers
-  tiers=("${(@f)$(_claude_litellm_tiers)}")
-  for tier in "${tiers[@]}"; do
-    tier_upper="${tier:u}"
-    tier_model="$(_claude_litellm_json "aliases.$tier" 2>/dev/null || true)"
-    tier_display="$(_claude_litellm_json "displayNames.$tier" 2>/dev/null || printf '%s via LiteLLM' "$tier_upper")"
-    env_assignments+=(
-      "${tier_model_prefix}_${tier_upper}_MODEL=$tier_model"
-      "${tier_display_prefix}_${tier_upper}_MODEL_NAME=$tier_display"
-    )
+  local mode mode_explicit=0
+  mode="$(_claude_litellm_default_mode)" || return $?
+  while (( $# > 0 )); do
+    case "$1" in
+      --direct|--openrouter-direct)
+        mode="direct"
+        mode_explicit=1
+        shift
+        ;;
+      --proxy|--litellm-proxy)
+        mode="proxy"
+        mode_explicit=1
+        shift
+        ;;
+      --mode)
+        if [[ -z "${2:-}" ]]; then
+          echo "Missing value for --mode (direct|proxy)." >&2
+          return 1
+        fi
+        case "$2" in
+          direct|openrouter|openrouter-direct) mode="direct" ;;
+          proxy|litellm|litellm-proxy) mode="proxy" ;;
+          *) echo "Unknown claude-litellm mode: $2" >&2; return 1 ;;
+        esac
+        mode_explicit=1
+        shift 2
+        ;;
+      --mode=*)
+        case "${1#--mode=}" in
+          direct|openrouter|openrouter-direct) mode="direct" ;;
+          proxy|litellm|litellm-proxy) mode="proxy" ;;
+          *) echo "Unknown claude-litellm mode: ${1#--mode=}" >&2; return 1 ;;
+        esac
+        mode_explicit=1
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
   done
 
-  # Claude Code exposes process-global knobs for compact threshold and request
-  # max_tokens. Shared-window providers count input + reserved output together,
-  # so we inject a small reservation rather than the model's output capability.
-  local active_budget active_effective_input active_reservation
-  active_budget="$(ai_litellm_harness_output_budget "$CLAUDE_LITELLM_HARNESS" "$claude_model_arg" "$target_model" 2>/dev/null || true)"
-  if [[ -n "$active_budget" ]]; then
-    active_effective_input="$(print -r -- "$active_budget" | jq -r '.effectiveInput // empty')"
-    active_reservation="$(print -r -- "$active_budget" | jq -r '.reservation // empty')"
-    [[ -n "$active_effective_input" ]] && env_assignments+=("${auto_compact_window_env}=$active_effective_input")
-    [[ -n "$active_reservation" ]] && env_assignments+=("${max_output_tokens_env}=$active_reservation")
-  fi
-
-  local harness_effort
-  local -a claude_extra_args
-  harness_effort="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.reasoning.effort 2>/dev/null || true)"
-  if [[ -n "$harness_effort" && "$harness_effort" != "auto" && "$harness_effort" != "none" ]]; then
-    if ! ai_litellm_cli_arg_present --effort "$@"; then
-      claude_extra_args=(--effort "$harness_effort")
+  local requested=""
+  if [[ -n "${1:-}" && "$1" != -* ]]; then
+    if [[ "$mode" == "proxy" ]]; then
+      if _claude_litellm_resolve_model_arg "$1" >/dev/null 2>&1; then
+        requested="$1"
+        shift
+      fi
+    elif _claude_litellm_is_tier "$1"; then
+      requested="$1"
+      shift
+    elif (( ! mode_explicit )) && _claude_litellm_resolve_model_arg "$1" >/dev/null 2>&1; then
+      mode="proxy"
+      requested="$1"
+      shift
+    elif _claude_litellm_direct_model_like "$1" || (( mode_explicit )); then
+      requested="$1"
+      shift
     fi
   fi
 
-  ai_litellm_harness_exec_env "$CLAUDE_LITELLM_HARNESS" "${env_assignments[@]}" -- \
-    "$claude_command" --settings "$CLAUDE_LITELLM_SETTINGS_ARG" --model "$claude_model_arg" "${claude_extra_args[@]}" "$@"
+  case "$mode" in
+    direct) _claude_litellm_launch_direct "$requested" "$@" ;;
+    proxy) _claude_litellm_launch_proxy "$requested" "$@" ;;
+  esac
 }
 
 claude-via-litellm() {

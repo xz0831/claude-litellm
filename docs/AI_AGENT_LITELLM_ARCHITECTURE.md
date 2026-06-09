@@ -1,24 +1,28 @@
-# Claude Code / Codex LiteLLM Architecture
+# Claude Code / Codex Gateway Architecture
 
-Last updated: 2026-06-08
+Last updated: 2026-06-09
 
 ## 결론
 
-현재 구조는 여섯 가지 실행 경로를 분리한다.
+현재 구조는 일곱 가지 실행 경로를 분리한다.
 
 - `claude`: native Claude Code OAuth/session
 - `codex`: native Codex OAuth/session
-- `claude-litellm`: Claude Code through local LiteLLM
+- `claude-litellm`: Claude Code through OpenRouter Anthropic-compatible API, no local proxy
+- `claude-litellm --proxy`: Claude Code through local LiteLLM for local/non-Claude routes
 - `codex-litellm`: Codex through local LiteLLM
 - `goose-litellm`: goose through local LiteLLM
 - `opencode-litellm`: OpenCode through local LiteLLM
 
 provider/model registry에 대해서는 두 가지 source of truth만 둔다.
 
-- **모델 라우팅**: package config의 `litellm_config.yaml` `model_list` (surface model_name → underlying provider model).
+- **Claude direct routing**: `config/claude-litellm/settings.json`의 `directAliases` (Claude tier → OpenRouter Anthropic Skin model).
+- **LiteLLM 모델 라우팅**: package config의 `litellm_config.yaml` `model_list` (surface model_name → underlying provider model).
 - **모델별 토큰 한도(context window / max output)**: 같은 파일의 `x-limits:` YAML 앵커. underlying 모델당 앵커 1개, surface 엔트리는 `model_info: *alias`로 참조한다. 앵커 한 줄을 고치면 모든 harness 설정이 파생된다([토큰 한도 / Context Window 관리](#토큰-한도--context-window-관리) 참조).
 
-Claude Code의 매 요청 출력 예약은 모델 능력치가 아니므로 `x-limits`에 넣지 않는다. Claude harness adapter 정책(`__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation`)에서 별도로 관리하고, 런처가 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`와 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 여기서 파생한다.
+Claude direct 경로는 OpenRouter의 Anthropic-compatible API를 직접 본다. 런처는 `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, `ANTHROPIC_AUTH_TOKEN=<OpenRouter key>`, `ANTHROPIC_API_KEY=`를 subprocess에만 주입하고, `ANTHROPIC_DEFAULT_*_MODEL`을 `directAliases`에서 파생한다. 기본 direct tier는 비용과 Claude Code 일상 작업 적합성을 고려해 `sonnet`이다. 이 경로에서는 local LiteLLM proxy를 시작하지 않고 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`/`CLAUDE_CODE_AUTO_COMPACT_WINDOW`도 주입하지 않는다.
+
+Claude proxy fallback의 매 요청 출력 예약은 모델 능력치가 아니므로 `x-limits`에 넣지 않는다. Claude harness adapter 정책(`__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation`)에서 별도로 관리하고, proxy 경로 런처가 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`와 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 여기서 파생한다.
 
 context window는 단일 숫자가 아니라 `native product/session`, `provider/API`, `LiteLLM route`, `harness metadata`, `runtime capability`가 따로 존재한다. 이 값들은 자동으로 상속되지 않는다. 확인은 `ai-litellm context matrix|probe|doctor`로 한다([Context Budget 검증](#context-budget-검증) 참조).
 
@@ -30,7 +34,8 @@ context window는 단일 숫자가 아니라 `native product/session`, `provider
 flowchart LR
   A["claude"] --> B["Native Claude config/session"]
   C["codex"] --> D["Native Codex config/session"]
-  E["claude-litellm"] --> F["Claude LiteLLM config/session"]
+  E["claude-litellm"] --> P["OpenRouter Anthropic API"]
+  Q["claude-litellm --proxy"] --> F["Claude LiteLLM config/session"]
   G["codex-litellm"] --> H["Codex LiteLLM CODEX_HOME"]
   L["goose-litellm"] --> M["goose LiteLLM GOOSE_PATH_ROOT"]
   N["opencode-litellm"] --> O["OpenCode LiteLLM config/data dirs"]
@@ -49,14 +54,14 @@ flowchart LR
 | Installed package root | `__FABRIC_HOME__` (default `__HOME__/.local/share/ai-litellm-fabric`) |
 | LiteLLM provider/model registry | `__FABRIC_HOME__/config/litellm_config.yaml` |
 | 모델별 토큰 한도 단일 출처 (`x-limits:` 앵커) | `__FABRIC_HOME__/config/litellm_config.yaml` |
-| Claude LiteLLM alias/default/display names | `__FABRIC_HOME__/config/claude-litellm/settings.json` |
+| Claude direct/proxy alias/default/display names | `__FABRIC_HOME__/config/claude-litellm/settings.json` |
 | Codex LiteLLM shortcuts | `__FABRIC_HOME__/config/codex-litellm/settings.json` |
 | Harness descriptor schema | `__FABRIC_HOME__/config/ai-litellm/harnesses/schema.json` |
 | Claude harness descriptor | `__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json` |
 | Codex harness descriptor | `__FABRIC_HOME__/config/ai-litellm/harnesses/codex.json` |
 | goose harness descriptor | `__FABRIC_HOME__/config/ai-litellm/harnesses/goose.json` |
 | OpenCode harness descriptor | `__FABRIC_HOME__/config/ai-litellm/harnesses/opencode.json` |
-| Claude Code 출력 예약 정책 | `__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation` |
+| Claude Code proxy fallback 출력 예약 정책 | `__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation` |
 | Codex LiteLLM generated config | `__FABRIC_HOME__/state/codex-litellm/codex-home/config.toml` |
 | Codex LiteLLM compatibility catalog | `__FABRIC_HOME__/state/codex-litellm/model-catalog.json` |
 | OpenCode LiteLLM generated config | `__FABRIC_HOME__/state/opencode-litellm/opencode.json` |
@@ -68,7 +73,7 @@ flowchart LR
 | Private env file (local secrets, not git) | `__FABRIC_HOME__/state/ai-litellm/env` |
 | Installed package tools | `__FABRIC_HOME__/scripts/uninstall.zsh` |
 | Shared LiteLLM proxy command shim | `__HOME__/.local/bin/ai-litellm` → `__FABRIC_HOME__/bin/ai-litellm` |
-| Claude LiteLLM command shim | `__HOME__/.local/bin/claude-litellm` → `__FABRIC_HOME__/bin/claude-litellm` |
+| Claude command shim | `__HOME__/.local/bin/claude-litellm` → `__FABRIC_HOME__/bin/claude-litellm` |
 | Codex LiteLLM command shim | `__HOME__/.local/bin/codex-litellm` → `__FABRIC_HOME__/bin/codex-litellm` |
 | goose LiteLLM command shim | `__HOME__/.local/bin/goose-litellm` → `__FABRIC_HOME__/bin/goose-litellm` |
 | OpenCode LiteLLM command shim | `__HOME__/.local/bin/opencode-litellm` → `__FABRIC_HOME__/bin/opencode-litellm` |
@@ -162,9 +167,11 @@ ai-litellm proxy logs
 ai-litellm proxy doctor
 ```
 
+`claude-litellm` 기본 실행은 proxy를 쓰지 않는다. `claude-litellm --proxy`, local runtime 모델, registry에 있는 non-Claude provider model을 사용할 때만 Claude도 shared LiteLLM proxy 경로로 들어간다.
+
 `ai-litellm proxy doctor`는 running proxy가 현재 registry hash를 로드했는지 확인한다. registry를 바꾼 뒤 재기동을 잊으면 `running proxy loaded current config` 또는 `running proxy routes match config`가 실패한다. 토큰 한도를 바꾼 경우 `ai-litellm sync` 한 번이면 파생 설정 재생성과 재기동이 모두 처리된다. 재기동 없이 생성물만 갱신하려면 `ai-litellm sync --no-restart`, 변경 없이 동작 계획만 확인하려면 `ai-litellm sync --dry-run`을 쓴다. `sync`는 Codex catalog/config, Claude isolated settings, OpenCode config 같은 파생물을 각 harness CLI 설치 여부와 분리해서 다룬다. 없는 native CLI는 catalog refresh나 launch에서만 skip/fail하고, metadata/doctor/config 생성은 깨지지 않아야 한다.
 
-proxy start에는 lock을 둬서 꺼진 상태에서 동시에 시작해도 중복 기동을 피한다. 단, `stop`/`restart`/`sync`는 공유 proxy를 내리므로 실행 중인 Claude/Codex LiteLLM 세션 모두에 영향을 준다.
+proxy start에는 lock을 둬서 꺼진 상태에서 동시에 시작해도 중복 기동을 피한다. 단, `stop`/`restart`/`sync`는 공유 proxy를 내리므로 실행 중인 Claude proxy fallback/Codex LiteLLM 세션 모두에 영향을 준다.
 
 Codex shortcut은 shell 편의 기능일 뿐이다. harness, skill, 문서에는 shortcut보다 Codex surface model name을 쓴다.
 
@@ -176,7 +183,7 @@ codex-litellm codex-auto-review
 
 ## Harness 관리
 
-Claude/Codex LiteLLM wrapper는 descriptor-backed adapter로 실행된다. 기존 `claude-litellm`/`codex-litellm` 명령은 유지하되, path, command, isolation, Codex subcommands, generated Codex config는 harness descriptor에서 읽는다.
+Claude/Codex wrapper는 descriptor-backed adapter로 실행된다. 기존 `claude-litellm`/`codex-litellm` 명령은 유지하되, path, command, isolation, Codex subcommands, generated Codex config는 harness descriptor에서 읽는다. Claude descriptor의 provider는 direct OpenRouter endpoint를 표현하고, proxy fallback은 launcher가 `ai_litellm_base_url`과 LiteLLM master key를 명시적으로 사용한다.
 goose/OpenCode도 native 실행과 별도로 `goose-litellm`/`opencode-litellm` managed profile을 둔다. goose는 env-injector adapter로, OpenCode는 generated-config adapter로 실행한다.
 
 ```zsh
@@ -185,6 +192,7 @@ ai-litellm harness info claude
 ai-litellm harness info codex
 
 ai-litellm harness launch claude sonnet -p "Reply with exactly OK" --no-session-persistence --tools ""
+ai-litellm harness launch claude --proxy haiku -p "Reply with exactly OK" --no-session-persistence --tools ""
 ai-litellm harness launch codex exec --skip-git-repo-check --sandbox read-only "Reply with exactly OK"
 ai-litellm harness launch goose gpt-5.4 run --no-session --no-profile -q --max-turns 1 -t "Reply with exactly OK"
 ai-litellm harness launch opencode gpt-5.4 run --agent plan --format json "Reply with exactly OK"
@@ -210,7 +218,7 @@ LiteLLM-backed 모델별 context window(`max_input_tokens`)와 max output(`max_o
 - **출력 능력치 또는 policy ceiling**: provider가 공개한 최대 출력 또는, 공개값이 없을 때 명시적으로 소유한 보수적 ceiling. OpenCode `limit.output`처럼 capability metadata가 필요한 generated artifact는 여기서 파생하되 confidence를 함께 본다.
 - **출력 예약(reservation)**: harness가 매 요청에서 provider에 예약시키는 출력 토큰. 공유 윈도우 provider가 `입력 + 예약 출력 <= context`로 회계하면 이 값은 작아야 한다.
 
-Claude Code는 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`를 매 요청 `max_tokens` 예약으로 사용하므로, 이 env에는 `max_output_tokens` 능력치를 넣지 않는다. Codex LiteLLM은 Responses 요청에 신뢰할 만한 output cap을 주입하지 못하므로 generated catalog의 `context_window`를 safe input budget으로 낮춘다. Goose도 `GOOSE_MAX_TOKENS`를 통해 매 응답 출력 예약을 낮춘다. OpenCode는 custom OpenAI-compatible provider에서 32k output ceiling을 쓸 수 있으므로 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`를 명시해 암묵적 fallback이 아니라 harness policy로 관리한다. 현재 reservation 기본 정책은 `32000`, tokenizer headroom `8192`, minimum input `32768`이다. 런처/생성기 계산식:
+Claude direct 경로는 OpenRouter Anthropic Skin이 Claude Code native protocol을 직접 처리하도록 두므로 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`를 주입하지 않는다. Claude proxy fallback은 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`를 매 요청 `max_tokens` 예약으로 사용하므로, 이 env에는 `max_output_tokens` 능력치를 넣지 않는다. Codex LiteLLM은 Responses 요청에 신뢰할 만한 output cap을 주입하지 못하므로 generated catalog의 `context_window`를 safe input budget으로 낮춘다. Goose도 `GOOSE_MAX_TOKENS`를 통해 매 응답 출력 예약을 낮춘다. OpenCode는 custom OpenAI-compatible provider에서 32k output ceiling을 쓸 수 있으므로 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`를 명시해 암묵적 fallback이 아니라 harness policy로 관리한다. 현재 reservation 기본 정책은 `32000`, tokenizer headroom `8192`, minimum input `32768`이다. proxy fallback 런처/생성기 계산식:
 
 ```text
 output_reservation = adapterConfig.outputReservation(default/perTier/perModel)
@@ -474,7 +482,7 @@ curl http://127.0.0.1:8000/v1/models
 ai-litellm sync
 ai-litellm model list | grep '^  local-omlx-'
 ai-litellm model info local-omlx-qwen3.5-9b-mlx-8bit
-claude-litellm local-omlx-qwen3.5-9b-mlx-8bit -p "Reply with exactly LOCAL_OK" --no-session-persistence --tools ""
+claude-litellm --proxy local-omlx-qwen3.5-9b-mlx-8bit -p "Reply with exactly LOCAL_OK" --no-session-persistence --tools ""
 codex-litellm local-omlx-qwen3.5-9b-mlx-8bit exec --skip-git-repo-check --sandbox read-only "Reply with exactly LOCAL_OK"
 goose-litellm local-omlx-qwen3.5-9b-mlx-8bit run --no-session --no-profile -q --max-turns 1 -t "Reply with exactly LOCAL_OK"
 opencode-litellm local-omlx-qwen3.5-9b-mlx-8bit run --agent plan --format json "Reply with exactly LOCAL_OK"

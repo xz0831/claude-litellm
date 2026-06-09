@@ -143,8 +143,48 @@ test -f "$claude_settings"
 jq empty "$claude_settings"
 test "$(stat -f %Lp "$claude_settings")" = "600"
 source "$prefix/config/claude-litellm/shell.zsh"
+test "$(_claude_litellm_default_mode)" = "direct"
+test "$(_claude_litellm_direct_default_request)" = "sonnet"
+test "$(_claude_litellm_proxy_default_request)" = "opus"
+test "$(_claude_litellm_direct_model_for_request "")" = "~anthropic/claude-sonnet-latest"
+test "$(_claude_litellm_direct_model_for_request opus)" = "~anthropic/claude-opus-latest"
+test "$(_claude_litellm_direct_model_arg_for_request opus)" = "opus"
+test "$(_claude_litellm_target_model_for_request "")" = "DeepSeek-V4-Pro"
 test "$(_claude_litellm_target_model_for_request openrouter/deepseek/deepseek-v4-pro)" = "DeepSeek-V4-Pro"
 test "$(_claude_litellm_resolve_model_arg openrouter/deepseek/deepseek-v4-pro)" = "DeepSeek-V4-Pro"
+(
+  _claude_litellm_launch_proxy() { print -r -- "proxy:$1"; }
+  _claude_litellm_launch_direct() { print -r -- "direct:$1"; }
+  test "$(claude-litellm sonnet)" = "direct:sonnet"
+  test "$(claude-litellm --proxy sonnet)" = "proxy:sonnet"
+  test "$(claude-litellm openrouter/deepseek/deepseek-v4-pro)" = "proxy:openrouter/deepseek/deepseek-v4-pro"
+  test "$(claude-litellm --direct openrouter/deepseek/deepseek-v4-pro)" = "direct:openrouter/deepseek/deepseek-v4-pro"
+)
+stub_dir="$HOME/claude-stub"
+mkdir -p "$stub_dir"
+{
+  print -r -- "#!/usr/bin/env zsh"
+  print -r -- "print -r -- \"base=\$ANTHROPIC_BASE_URL\""
+  print -r -- "print -r -- \"auth=\${ANTHROPIC_AUTH_TOKEN:+set}\""
+  print -r -- "print -r -- \"api_key_set=\${+ANTHROPIC_API_KEY}\""
+  print -r -- "print -r -- \"api_key_value=\$ANTHROPIC_API_KEY\""
+  print -r -- "print -r -- \"discovery=\$CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY\""
+  print -r -- "print -r -- \"max_tokens_set=\${+CLAUDE_CODE_MAX_OUTPUT_TOKENS}\""
+  print -r -- "print -r -- \"sonnet=\$ANTHROPIC_DEFAULT_SONNET_MODEL\""
+  print -r -- "print -r -- \"subagent=\$CLAUDE_CODE_SUBAGENT_MODEL\""
+  print -r -- "print -r -- \"args=\$*\""
+} > "$stub_dir/claude"
+chmod +x "$stub_dir/claude"
+direct_output="$(PATH="$stub_dir:$PATH" OPENROUTER_API_KEY="TEST_OPENROUTER" claude-litellm sonnet -p noop)"
+[[ "$direct_output" == *"base=https://openrouter.ai/api"* ]]
+[[ "$direct_output" == *"auth=set"* ]]
+[[ "$direct_output" == *"api_key_set=1"* ]]
+[[ "$direct_output" == *"api_key_value="* ]]
+[[ "$direct_output" == *"discovery=0"* ]]
+[[ "$direct_output" == *"max_tokens_set=0"* ]]
+[[ "$direct_output" == *"sonnet=~anthropic/claude-sonnet-latest"* ]]
+[[ "$direct_output" == *"subagent=~anthropic/claude-opus-latest"* ]]
+[[ "$direct_output" == *"--model sonnet"* ]]
 "$HOME/.local/bin/claude-litellm" --status >/dev/null
 source "$prefix/config/codex-litellm/shell.zsh"
 test "$(_codex_litellm_resolve_model openrouter/deepseek/deepseek-v4-pro)" = "gpt-5.5"

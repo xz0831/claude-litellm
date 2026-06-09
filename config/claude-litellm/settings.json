@@ -1,5 +1,19 @@
 {
-  "default": "opus",
+  "mode": "direct",
+  "default": "sonnet",
+  "directDefault": "sonnet",
+  "proxyDefault": "opus",
+  "directAliases": {
+    "opus": "~anthropic/claude-opus-latest",
+    "sonnet": "~anthropic/claude-sonnet-latest",
+    "haiku": "~anthropic/claude-haiku-latest"
+  },
+  "directDisplayNames": {
+    "opus": "Claude Opus via OpenRouter",
+    "sonnet": "Claude Sonnet via OpenRouter",
+    "haiku": "Claude Haiku via OpenRouter"
+  },
+  "subagentModel": "~anthropic/claude-opus-latest",
   "aliases": {
     "opus": "DeepSeek-V4-Pro",
     "sonnet": "Kimi-K2.6",

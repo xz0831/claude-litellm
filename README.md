@@ -1,11 +1,11 @@
 # ai-litellm-fabric
 
-Portable LiteLLM-backed harness fabric for local AI agent CLIs.
+Portable harness fabric for local AI agent CLIs.
 
-This repository manages only the LiteLLM wrapper layer:
+This repository manages the wrapper layer around local agent CLIs:
 
 - `ai-litellm`: shared proxy lifecycle, routing, context/reasoning doctors
-- `claude-litellm`: Claude Code through the shared LiteLLM proxy
+- `claude-litellm`: Claude Code through OpenRouter's Anthropic-compatible API by default, with a LiteLLM proxy fallback
 - `codex-litellm`: Codex CLI through the shared LiteLLM proxy
 - `goose-litellm`: goose through the shared LiteLLM proxy
 - `opencode-litellm`: OpenCode through the shared LiteLLM proxy
@@ -36,7 +36,7 @@ Tracked source:
 - `config/ai-litellm/lib.zsh`: shared library
 - `config/ai-litellm/settings.json`: shared proxy/runtime settings
 - `config/ai-litellm/harnesses/*.json`: harness descriptors
-- `config/claude-litellm/*`: Claude LiteLLM adapter settings/helper
+- `config/claude-litellm/*`: Claude direct/proxy adapter settings/helper
 - `config/codex-litellm/*`: Codex LiteLLM adapter settings/helper
 - `docs/AI_AGENT_LITELLM_ARCHITECTURE.md`: maintainer architecture guide
 - `scripts/install.zsh`: installer for another Mac
@@ -188,14 +188,27 @@ For Codex, a raw provider slug is resolved to a Codex-safe facade such as
 slug can be used in place of the model argument in the harness smoke tests
 below.
 
-Then test one harness:
+Then test one harness. Claude Code defaults to the thin OpenRouter direct path
+documented by OpenRouter for Claude Code: `ANTHROPIC_BASE_URL` is
+`https://openrouter.ai/api`, the OpenRouter key is injected as
+`ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_API_KEY` is explicitly blanked to avoid
+auth conflicts. The default direct tier is `sonnet`; use `opus` explicitly for
+the higher-cost Opus tier.
 
 ```zsh
-claude-litellm haiku -p 'Reply with exactly OK' --no-session-persistence --tools ''
+claude-litellm sonnet -p 'Reply with exactly OK' --no-session-persistence --tools ''
 codex-litellm exec --skip-git-repo-check --sandbox read-only 'Reply with exactly OK'
 ```
 
 Those harness smoke tests make real provider requests and may be billable.
+
+Use the LiteLLM proxy path explicitly when you want the curated non-Claude
+OpenRouter routes or local runtime routes from the registry:
+
+```zsh
+claude-litellm --proxy haiku -p 'Reply with exactly OK' --no-session-persistence --tools ''
+claude-litellm --proxy local-omlx-gemma4-12b -p 'Reply with exactly LOCAL_OK' --no-session-persistence --tools ''
+```
 
 ## Local Models
 
@@ -224,10 +237,10 @@ Model capability and request reservation are separate concepts.
   `model_info`.
 - Harness-specific reservation lives in the harness descriptor when needed.
 
-Some harnesses need explicit output reservation handling because they send or
-infer per-request `max_tokens` values:
+Some proxy-backed harnesses need explicit output reservation handling because
+they send or infer per-request `max_tokens` values:
 
-- Claude Code: `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
+- Claude Code proxy fallback: `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
 - Codex LiteLLM: generated catalog `context_window` for OpenRouter-backed
   slugs is reduced to the safe input budget because Codex does not expose a
   reliable Responses output cap
