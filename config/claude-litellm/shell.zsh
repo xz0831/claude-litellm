@@ -489,23 +489,39 @@ claude-litellm() {
     esac
   done
 
-  local requested=""
+  local requested="" consumed=0
   if [[ -n "${1:-}" && "$1" != -* ]]; then
     if [[ "$mode" == "proxy" ]]; then
       if _claude_litellm_resolve_model_arg "$1" >/dev/null 2>&1; then
         requested="$1"
         shift
+        consumed=1
       fi
     elif _claude_litellm_is_tier "$1"; then
       requested="$1"
       shift
+      consumed=1
     elif (( ! mode_explicit )) && _claude_litellm_resolve_model_arg "$1" >/dev/null 2>&1; then
       mode="proxy"
       requested="$1"
       shift
+      consumed=1
     elif _claude_litellm_direct_model_like "$1" || (( mode_explicit )); then
       requested="$1"
       shift
+      consumed=1
+    fi
+    # A leading non-flag positional is the model selector. If nothing consumed
+    # it (unknown tier/model_name, or a typo), it would otherwise leak to claude
+    # AS THE PROMPT — silently, and with the default model. Fail loud instead.
+    # (Tiers/raw model_names are the only valid selectors; see DESIGN_RATIONALE
+    # §3 "model selection contract". --direct passes shaped ids straight to
+    # OpenRouter, which 404s loudly, so explicit-direct stays permissive above.)
+    if (( ! consumed )); then
+      echo "claude-litellm: '$1' is not a selectable $mode model — not a tier (opus|sonnet|haiku) and not a registered LiteLLM model_name." >&2
+      echo "  list routes:  ai-litellm model list" >&2
+      echo "  meant a prompt?  claude-litellm -p '$1'" >&2
+      return 1
     fi
   fi
 

@@ -68,6 +68,15 @@ ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-27B" "PlainLocal" >/dev/nul
 grep -A8 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 131072"
 grep -A8 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_output_tokens: 16384"
 grep -A8 "model_name: PlainLocal-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 8192"
+# litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
+# (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
+# via a temp settings overlay so the shipped empty {} stays behavior-preserving.
+params_settings_tmp="$HOME/omlx-params-test.json"
+jq '.runtimes.omlx.litellmParamsOverrides = {"*Test-35B*": {"extra_body": {"chat_template_kwargs": {"enable_thinking": false}}}}' "$AI_LITELLM_SETTINGS" > "$params_settings_tmp"
+AI_LITELLM_SETTINGS="$params_settings_tmp" ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-35B" "Qwen3.6-Test-27B" >/dev/null
+grep -A12 "model_name: Qwen3.6-Test-35B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
+! grep -A12 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking"
+ai_litellm_model_info_anchor_refs_ok
 for harness in "${(@f)$(ai_litellm_harness_names)}"; do
   ai_litellm_harness_validate "$harness"
 done
@@ -188,6 +197,15 @@ test "$(_claude_litellm_resolve_model_arg openrouter/deepseek/deepseek-v4-pro)" 
   test "$(claude-litellm --proxy sonnet)" = "proxy:sonnet"
   test "$(claude-litellm openrouter/deepseek/deepseek-v4-pro)" = "proxy:openrouter/deepseek/deepseek-v4-pro"
   test "$(claude-litellm --direct openrouter/deepseek/deepseek-v4-pro)" = "direct:openrouter/deepseek/deepseek-v4-pro"
+  # F1: an unresolvable proxy model must ERROR (non-zero, with the bad token in
+  # the message) and never reach the launcher — never leak as a prompt. These
+  # are non-vacuous: without the guard the stubbed launcher prints "proxy:" and
+  # returns 0, so the negated tests fail.
+  ! claude-litellm --proxy Qwen3.6-35B-omlx >/dev/null 2>&1
+  claude-litellm --proxy Qwen3.6-35B-omlx 2>&1 | grep -q "'Qwen3.6-35B-omlx' is not a selectable proxy model"
+  ! claude-litellm --proxy h35 >/dev/null 2>&1
+  ! claude-litellm not-a-real-model >/dev/null 2>&1
+  test "$(claude-litellm --proxy Qwen3.6-27B-omlx)" = "proxy:Qwen3.6-27B-omlx"
 )
 stub_dir="$HOME/claude-stub"
 mkdir -p "$stub_dir"

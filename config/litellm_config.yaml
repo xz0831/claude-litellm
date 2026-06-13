@@ -145,6 +145,24 @@ model_list:
       api_key: none
     model_info: *qwen36_27b_local
 
+  # Qwen3.6 35B-A3B MoE local route — Phase 0 replication arm (dense-vs-MoE under
+  # identical harness guidance). Same caps as the 27B route, hence the shared anchor.
+  # Name = the canonical discovered name (full model id, incl. A3B MoE marker +
+  # quant), so this promoted entry and the sync-discovered route are one and the
+  # same (dedup keeps only this one). Qualified thinking-OFF: this MoE drifts
+  # off-task under the heavy harness system prompt with thinking on (per-model
+  # qualification — see the architecture guide). extra_body.chat_template_kwargs
+  # is forwarded by LiteLLM straight to oMLX.
+  - model_name: Qwen3.6-35B-A3B-4bit-omlx
+    litellm_params:
+      model: openai/Qwen3.6-35B-A3B-4bit
+      api_base: http://127.0.0.1:8000/v1
+      api_key: none
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+    model_info: *qwen36_27b_local
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 

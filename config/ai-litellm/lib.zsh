@@ -2625,6 +2625,30 @@ info_for = lambda do |model_id, route|
   info
 end
 
+# Per-route litellm_params overrides for discovered routes (e.g. thinking-off
+# via extra_body.chat_template_kwargs). Same glob semantics as modelInfoOverrides
+# (matched on upstream model id AND route name, later pattern wins whole-key).
+# This is how a model qualified as "thinking-off" gets the param injected into
+# its sync-regenerated route without hand-promotion. Default {} = no change.
+param_overrides = rt["litellmParamsOverrides"] || {}
+params_for = lambda do |model_id, route|
+  extra = {}
+  matched = []
+  param_overrides.each do |pattern, partial|
+    next unless partial.is_a?(Hash)
+    if File.fnmatch(pattern, model_id.to_s, File::FNM_CASEFOLD) ||
+       File.fnmatch(pattern, route.to_s, File::FNM_CASEFOLD)
+      extra = extra.merge(partial)
+      matched << pattern
+    end
+  end
+  [extra, matched]
+end
+emit_params = lambda do |hash, indent|
+  YAML.dump(hash).sub(/\A---\s*\n?/, "").each_line
+    .map { |l| l.strip.empty? ? "\n" : (" " * indent) + l }.join
+end
+
 start_marker = "# BEGIN ai-litellm discovered local routes"
 end_marker = "# END ai-litellm discovered local routes"
 original = File.read(config_path)
@@ -2680,7 +2704,11 @@ routes = model_ids.map do |model_id|
   [route, model_id]
 end.compact
 
-routes.each { |route, model_id| puts "  + #{route} -> openai/#{model_id}" }
+routes.each do |route, model_id|
+  _extra, matched = params_for.call(model_id, route)
+  suffix_note = matched.empty? ? "" : "  [litellm_params override: #{matched.join(%q{,})}]"
+  puts "  + #{route} -> openai/#{model_id}#{suffix_note}"
+end
 exit 0 if dry_run == "1"
 
 block = ""
@@ -2693,6 +2721,8 @@ unless routes.empty?
     block << "      model: #{scalar.call("openai/#{model_id}")}\n"
     block << "      api_base: #{scalar.call(api_base)}\n"
     block << "      api_key: none\n"
+    extra_params, = params_for.call(model_id, route)
+    block << emit_params.call(extra_params, 6) unless extra_params.empty?
     # Inline, not *anchor refs: this block is regenerated wholesale and these
     # numbers are runtime POLICY (defaults/overrides), not provider capability
     # (see the ai_litellm_model_info_anchor_refs_ok exemption).

@@ -657,6 +657,25 @@ ai-litellm key status
 - /model picker의 게이트웨이 목록(gateway discovery): proxy 모드에서 `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`로 LiteLLM `/v1/models`를 조회하지만, Claude Code는 **id(= LiteLLM surface model_name)가 `claude`/`anthropic`으로 시작하는 항목만** 목록에 올린다(표시명이 아니라 id 기준; 바이너리 필터 실증). 현 네이밍 컨벤션의 surface명은 어느 것도 매칭되지 않으므로 discovery는 사실상 휴면이며, 이를 관리하는 규약은 두지 않는다 — tier 외 모델은 launch 시 모델명 지정(`claude-litellm <surface명>`) 또는 세션 내 `/model <surface명>`으로 쓴다. picker 노출이 꼭 필요해지면 `anthropic-<surface>` alias route를 추가하는 방법이 있으나 네이밍 컨벤션과 충돌하므로 채택하지 않는다. OpenRouter Anthropic 호환 엔드포인트가 비-Anthropic 모델도 수용함을 실측 검증했다(kimi/glm/deepseek 모두 응답) — 단 이 경로의 tool-calling 변환 품질은 LiteLLM proxy 경로(eval 15/15)와 달리 미검증이므로 direct는 보조 경로다. haiku tier의 Qwen3.6-27B는 discovered route가 아니라 모델 추가 절차에 따라 x-limits 앵커를 가진 정식 registry 엔트리로 승격했다(reinstall/discovery에 독립).
 - 로컬 모델 사용: `claude-litellm <LiteLLM route명>`은 자동으로 proxy 모드 전환되므로 `claude-litellm Qwen3.6-27B-omlx`처럼 바로 실행한다. `/model <route명>`을 세션 안에서 타이핑해도 전환된다(단, 공유 settings에 모델 pin이 저장되므로 lint warning 대상). picker의 "From gateway" 목록에는 접두사 필터 때문에 로컬 라우트가 나타나지 않으며, `ANTHROPIC_CUSTOM_MODEL_OPTION`은 단일 슬롯이라 채택하지 않았다.
 
+## 2026-06-13 로컬 모델 온보딩 결정 로그 (F1/F2)
+
+openclaw-brain eval 세션의 핸드오프(4번째 로컬 모델 `Qwen3.6-35B-A3B`를 `--proxy`로 추가 실패)를 실증으로 분리한 결과, 보고된 두 "fabric 버그"가 단일 근본 원인으로 수렴했다. 상세 근거·기각 대안·반론은 [DESIGN_RATIONALE.md §3](DESIGN_RATIONALE.md)이 종합한다.
+
+- **F1 (모델 선택 footgun)**: `claude-litellm <token>`의 선행 positional이 tier도 등록 model_name도 아니면 `shift`되지 않아 `claude`에 **프롬프트로 조용히 누출**됐다(launch_proxy가 빈 requested를 default tier로 폴백해 에러조차 안 남). 오타·alias 키 시도가 전부 "모델이 프롬프트를 잃었다"로 보였다. **수정**: arg 파서에 "소비 안 됨 → loud-error(비-0)" 가드. 정본 선택 경로는 `--proxy <model_name>`(이미 작동, 발견 라우트 포함)이며, 임의 alias-key 확장은 tier 의미 부재로 기각. → 핸드오프 acceptance 충족: `claude-litellm --proxy Qwen3.6-35B-A3B-4bit-omlx -p "..."`(정식 model_name — A3B MoE 마커·양자화 보존)이 정답 반환; 핸드오프가 타이핑했던 짧은 오타 `Qwen3.6-35B-omlx`는 이제 즉시 loud-error.
+- **F2 (route-level thinking-off)**: 포워딩 버그가 아니었다 — route-level `litellm_params.extra_body.chat_template_kwargs.enable_thinking: false`는 LiteLLM→oMLX로 정상 포워딩되어 thinking을 끈다(실측 148→2 토큰, 프롬프트 보존; `drop_params:true`도 안 떨굼). 핸드오프가 본 "프롬프트 손실(시 작성)"은 사실 F1 footgun이었다. **수정**: 발견 라우트엔 `runtimes.<rt>.litellmParamsOverrides` glob(modelInfoOverrides와 대칭)로 자동 주입, tier/eval용 항구 라우트엔 정식 엔트리 승격 + extra_body 명시. Phase 0 replication arm `Qwen3.6-35B-A3B-4bit-omlx`은 후자로 thinking-off 적용(MoE가 thinking-ON에서 off-task drift — per-model 자격검증 결과).
+- **M1/M2 (모델별 사실, fabric 수정 불가)**: `Qwen3.6-35B-A3B`는 heavy harness + thinking-ON에서 off-task drift(M1), thinking-off에서도 27B보다 수치 정확도 낮음(M2). 어떤 fabric 수정도 이 단계를 없애지 못한다 — fabric은 *실행 가능*하게만 만들고, 매 신규 로컬 모델은 아래 자격검증을 통과해야 한다.
+
+## Per-Model 자격검증 프로토콜 (신규 로컬 모델마다 실행)
+
+모델 `M`(oMLX 서빙명), 라우트 `R`(surface model_name), 목표: harness에서 쓸 수 있는가? thinking on/off? 정확도 등급? 재사용 probe — TRIV `"What is 7 times 6? Reply with only the number."`→`42`; DOMAIN(예시) `"A common-source stage uses a 50um/0.5um NMOS at I_D=1mA with a 2kohm load. Total input-referred thermal noise voltage over a 100MHz bandwidth? unCox=134uA/V^2, gamma=2/3, T=300K. End with the number in microvolts."`→`~15.6`.
+
+1. **Direct oMLX** (harness 우회, 기준선): `curl localhost:8000/v1/chat/completions`로 `M`을 thinking on/off(`chat_template_kwargs.enable_thinking`) 양쪽 호출. 지시 준수(TRIV)와 도메인 과제(DOMAIN) 확인, 토큰/지연 기록.
+2. **Proxy** (포워딩 확인): `ai-litellm sync`로 `R` 생성 후 `MK=$(security find-generic-password -s litellm-master-key -a "$USER" -w); curl 127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $MK"`로 `R` 호출 — 프롬프트가 도착하고(TRIV→정답) thinking 설정이 반영되는지(`reasoning_content` 유무, completion_tokens) 확인.
+3. **Harness**: `claude-litellm --proxy R -p TRIV --no-session-persistence --tools ''` → 간결한 정답; 이어서 DOMAIN. off-task drift와 max-turns 소진을 관찰(M1형 실패).
+4. **Thinking 결정**: thinking-ON이 토큰 폭증/drift를 유발하면 `R`을 thinking-off로. 발견 라우트면 `runtimes.<rt>.litellmParamsOverrides`에 glob 추가, tier/항구 라우트면 정식 엔트리에 `extra_body.chat_template_kwargs.enable_thinking: false` 명시. `ai-litellm sync` 후 2단계로 재확인.
+5. **정확도 게이트**: 도메인 probe 2–3개를 기지 정답과 대조, pass/fail 기록.
+6. **판정**: 모델 레지스트리에 기록 — harness 사용 가능? thinking on/off? 정확도 등급? (M1/M2처럼 모델별로 갈린다.)
+
 ## 장기 관리 원칙
 
 모델 실험은 LiteLLM registry에서 자유롭게 한다. Claude/Codex가 바라보는 facade와 shortcut은 작고 안정적으로 유지한다.
