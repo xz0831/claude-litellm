@@ -350,6 +350,16 @@ test "$(_codex_litellm_resolve_model DeepSeek-V4-Pro-openrouter)" = "gpt-5.5"
 test "$(_codex_litellm_resolve_model openrouter/moonshotai/kimi-k2.6)" = "gpt-5.4"
 test "$(_codex_litellm_resolve_model openai/gemma4-12b)" = "Gemma4-12B-omlx"
 test "$(_codex_litellm_resolve_model Gemma4-12B-omlx)" = "Gemma4-12B-omlx"
+# Pre-flight: a codex binary that cannot start (e.g. the macOS-Tahoe dyld hang)
+# must make a session launch fail LOUD + fast, never hang. A hanging stub proves
+# the bounded probe times out and reports actionably; an instant stub passes.
+codex_stub_dir="$HOME/codex-stub"; mkdir -p "$codex_stub_dir"
+{ print -r -- "#!/bin/sh"; print -r -- "exec sleep 30"; } > "$codex_stub_dir/hang-codex"; chmod +x "$codex_stub_dir/hang-codex"
+preflight_out="$(AI_LITELLM_CODEX_PREFLIGHT_TIMEOUT=1 _codex_litellm_preflight "$codex_stub_dir/hang-codex" 2>&1; print -r -- rc=$?)"
+[[ "$preflight_out" == *"did not start within"* ]]
+[[ "$preflight_out" == *"rc=1"* ]]
+{ print -r -- "#!/bin/sh"; print -r -- "echo codex-cli 0.0.0-test"; } > "$codex_stub_dir/ok-codex"; chmod +x "$codex_stub_dir/ok-codex"
+AI_LITELLM_CODEX_PREFLIGHT_TIMEOUT=5 _codex_litellm_preflight "$codex_stub_dir/ok-codex" >/dev/null 2>&1
 ai_litellm_render_opencode_config opencode
 test "$(stat -f %Lp "$prefix/state")" = "700"
 test "$(stat -f %Lp "$prefix/state/ai-litellm")" = "700"

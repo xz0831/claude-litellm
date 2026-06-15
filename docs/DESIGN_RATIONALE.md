@@ -186,6 +186,7 @@ codex는 자기 카탈로그로 모델을 검증·구동한다: 카탈로그는 
 | dedup(빈 출력 단언 — 네이밍 변경에 면역) | ✅ check (06-12 수정: 종전 단언은 옛 이름을 검사해 무효였음) |
 | 발견 실패는 발견 라우트를 wipe하지 않는다(parse-fail rc≠0 → loud-skip, 보존) — §9 | ✅ check (06-15 추가; reachable-but-garbage mock으로 보존 단언) |
 | 동시 sync 거부(별도 sync mutex, restart의 proxy lock과 데드락 없음) | ✅ check (06-15 추가; held-lock 시 즉시 loud 거부) |
+| codex 세션 실행 pre-flight(바이너리 미기동 시 무한행 대신 loud-fail) | ✅ check (06-15 추가; hang stub→timeout+loud, instant stub→pass) |
 | 경계 계약(native 디렉토리 비생성, 시크릿 비평가, uninstall prefix 안전) | ✅ check |
 | **scrub 실효성**(scrub된 var가 자식 env에서 실제로 사라지는지) | ⚠️ 무방비 — codex/goose/opencode용 stub 테스트 권고 |
 | **harness 예약 ↔ gateway clamp 수치 정렬** | ⚠️ 무방비 — doctor warn 권고 (주석으로만 선언됨) |
@@ -205,6 +206,7 @@ codex는 자기 카탈로그로 모델을 검증·구동한다: 카탈로그는 
 - **발견 실패의 silent 라우트 wipe (실버그, 수정)** — `ai_litellm_runtime_routes_refresh`가 `available_models`의 종료코드를 버려, 런타임이 reachable이지만 `/v1/models`가 파싱 불가 200을 줄 때 빈 목록을 `routes_write`에 넘겨 **발견 라우트를 통째로 조용히 삭제**했다(mock garbage 200으로 재현: 기존 라우트 1→0, "0 discovered"만 출력). 수정: 발견 실패(rc≠0)와 진짜 0개를 구분해, 실패 시 loud-skip + 기존 라우트 보존. unreachable/timeout은 이미 reachable 체크로 loud-skip됨(감사의 timeout 주장은 부정확).
 - **동시 sync 경쟁 (수정)** — `ai_litellm_start`엔 lock이 있으나 `ai_litellm_sync`엔 없어 두 sync가 다중 파일 재작성을 교차할 수 있었다(파일별 atomic tmp+rename은 reader의 half-file은 막지만 cross-file 불일치+이중 restart는 아님). proxy-start lock을 재사용하면 sync→restart→start가 데드락이므로, **전용 sync mutex**(non-blocking: 두 번째 sync는 loud 거부, dead-holder reclaim, 단일 종료점 release)를 추가했다. reclaim 판정은 `kill -0`(생존)와 age(`started_at` mtime, pid 재활용 안전) 둘 다 본다 — 회귀 테스트 작성 중 발견: `started_at`이 없는 **torn lock**(pid는 썼으나 started_at 직전에 죽거나 acquire 중)에서 `perl stat`이 빈 리스트→`time-undef`=전체 epoch을 줘 age가 max를 무조건 초과, 살아있는 holder를 잘못 reclaim했다. 미존재 stat은 age=0으로 읽어 `kill -0` 생존 체크가 판정하도록 고침.
 - **고아 tmp 정리 (위생)** — atomic rename 패턴 자체는 안전(중단돼도 config 무손상)하나 중단된 sync가 `*.tmp.$$`를 남긴다. sync 시작에서 sweep.
+- **codex 세션 실행 pre-flight (06-15 codex 사건 후속, 수정)** — sync 카탈로그 프로브는 timeout으로 감쌌으나(위 Fix D) **대화형 세션 실행 경로(`_codex_litellm_run_codex`)는 무방비**였다 — codex 바이너리가 안 뜨면(예: macOS Tahoe dyld 행, openai/codex#23802; 실측 0.139 `--version`이 pre-main `_dyld_start`에서 무한행) loud 에러도 없이 영원히 대기. exec 직전 bounded `codex --version` pre-flight(`AI_LITELLM_CODEX_PREFLIGHT_TIMEOUT:-10`)를 넣어 미기동 시 actionable loud-fail. 정상 바이너리는 ~0s라 비용 없음. 세션 실행은 timeout으로 감싸면 정상 긴 세션도 죽으니 **실행 자체가 아니라 startup 생사만** 본다. (해당 머신은 `~/.local/bin/codex`→앱 내장 0.140 심링크로 별도 해결.)
 
 **의식적으로 수용한 이론적 윈도우(단일 사용자 머신 기준, 미수정)**: pid/config-hash/started_at 파일의 bare-redirect 쓰기(start의 lock 하에서만 쓰므로 실질 경쟁 없음); proxy `/model/info`가 health는 통과하나 garbage를 줄 때 "run sync" 메시지가 약간 오도(여전히 actionable); 두 동시 claude-litellm launch의 overlay-render `.$$`(서로 다른 PID라 충돌 없음). 다중 사용자/CI 동시성으로 가면 flock 기반 강화가 다음 단계.
 

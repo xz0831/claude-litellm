@@ -206,6 +206,21 @@ fs.renameSync(tmp, configPath);
 ' "$descriptor" "$CODEX_LITELLM_CONFIG" "$(ai_litellm_api_base_url)"
 }
 
+# Fail loud (not infinite-hang) if the codex binary cannot even start — e.g. the
+# macOS-Tahoe dyld hang on Homebrew codex 0.139 (openai/codex#23802), where codex
+# blocks before main() and an interactive launch would wait forever with no error.
+# A bounded `--version` probe is ~0s on a healthy binary; on a stuck one it times
+# out and we say what is wrong. (The sync catalog probe is already bounded; this
+# gives the session-launch path the same loud-not-silent guarantee.)
+_codex_litellm_preflight() {
+  local codex_command="$1"
+  ai_litellm_run_timeout "${AI_LITELLM_CODEX_PREFLIGHT_TIMEOUT:-10}" "$codex_command" --version >/dev/null 2>&1 && return 0
+  echo "codex-litellm: '$codex_command' did not start within ${AI_LITELLM_CODEX_PREFLIGHT_TIMEOUT:-10}s ('codex --version' hung or failed)." >&2
+  echo "  the codex binary is not launching (e.g. the macOS-Tahoe dyld hang, openai/codex#23802)." >&2
+  echo "  check: command -v codex; ls -l \"\$(command -v codex)\" — a working build (e.g. the app-bundled one) fixes it." >&2
+  return 1
+}
+
 _codex_litellm_run_codex() {
   local master_key
   master_key="$(ai_litellm_master_key)" || return 1
@@ -215,6 +230,8 @@ _codex_litellm_run_codex() {
   codex_command="$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" command 2>/dev/null || printf 'codex')"
   auth_env="$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" provider.auth.env 2>/dev/null || printf 'LITELLM_MASTER_KEY')"
   isolation_env="$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" isolation.env 2>/dev/null || printf 'CODEX_HOME')"
+
+  _codex_litellm_preflight "$codex_command" || return 1
 
   ai_litellm_harness_exec_env "$CODEX_LITELLM_HARNESS" \
     "$isolation_env=$CODEX_LITELLM_CODEX_HOME" \
