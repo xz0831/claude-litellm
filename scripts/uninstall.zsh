@@ -7,12 +7,20 @@ prefix="${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litell
 bin_dir="$HOME/.local/bin"
 dry_run=0
 remove_legacy=0
+purge_keychain=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/uninstall.zsh [--dry-run] [--prefix PATH] [--legacy]
+Usage: scripts/uninstall.zsh [--dry-run] [--prefix PATH] [--legacy] [--purge-keychain]
 
 Removes the ai-litellm-fabric package directory and global command shims.
+Stops the shared LiteLLM proxy first so its state is not deleted out from
+under a live process.
+
+With --purge-keychain, also deletes the macOS Keychain secrets the fabric
+created (litellm-master-key, openrouter-api-key). Without it, the exact
+removal commands are printed instead, since a provider key may be shared
+with other tools.
 
 Default removal:
   - ~/.local/share/ai-litellm-fabric
@@ -43,6 +51,9 @@ while (( $# > 0 )); do
       ;;
     --legacy)
       remove_legacy=1
+      ;;
+    --purge-keychain)
+      purge_keychain=1
       ;;
     --prefix)
       shift
@@ -75,6 +86,63 @@ run() {
   fi
 }
 
+stop_running_proxy() {
+  # The proxy pid file lives under the prefix we are about to delete; rm -rf'ing
+  # it out from under a live process orphans the proxy. Stop it first, but only
+  # if the pid is actually our litellm (never signal an unrelated recycled pid).
+  local pid_file="$prefix/state/ai-litellm/litellm.pid"
+  [[ -f "$pid_file" ]] || return 0
+  local pid
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [[ "$pid" == <-> ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  ps -o command= -p "$pid" 2>/dev/null | grep -q 'litellm' || return 0
+
+  if (( dry_run )); then
+    printf 'dry-run '
+    printf '%q ' kill -TERM "$pid"
+    printf '\n'
+    return 0
+  fi
+
+  echo "Stopping running LiteLLM proxy (pid $pid) before removing its state."
+  kill -TERM "$pid" 2>/dev/null || true
+  local i
+  for i in {1..20}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+}
+
+handle_keychain() {
+  command -v security >/dev/null 2>&1 || return 0
+  local -a services=(litellm-master-key openrouter-api-key)
+  local svc
+  local -a found=()
+  for svc in $services; do
+    if security find-generic-password -s "$svc" >/dev/null 2>&1; then
+      found+=("$svc")
+    fi
+  done
+  (( ${#found} )) || return 0
+
+  if (( purge_keychain )); then
+    for svc in $found; do
+      run security delete-generic-password -a "$USER" -s "$svc"
+    done
+    return 0
+  fi
+
+  echo "Keychain secrets created by the fabric were left in place (they may be" >&2
+  echo "shared with other tools). Re-run with --purge-keychain, or remove them with:" >&2
+  for svc in $found; do
+    echo "  security delete-generic-password -a \"$USER\" -s \"$svc\"" >&2
+  done
+}
+
 assert_fabric_prefix_safe() {
   if [[ "${prefix:t}" != "ai-litellm-fabric" ]]; then
     echo "Refusing to remove non ai-litellm-fabric prefix: $prefix" >&2
@@ -97,7 +165,11 @@ for script in ai-litellm claude-litellm codex-litellm goose-litellm opencode-lit
   done
 done
 
+stop_running_proxy
+
 run rm -rf "$prefix"
+
+handle_keychain
 
 if (( remove_legacy )); then
   run rm -f "$HOME/litellm_config.yaml"
