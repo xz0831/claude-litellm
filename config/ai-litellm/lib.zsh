@@ -2185,6 +2185,47 @@ ai_litellm_route_info() {
     | awk 'BEGIN { printf "%-18s %-48s %s\n", "model_name", "provider_model", "provider" } { printf "%-18s %-48s %s\n", $1, $2, $3 }'
 }
 
+# Print the FULL model_info block (x-limits, extra_body, reasoning, litellm_provider,
+# ...) echoed by GET /model/info, so `model info <name>` confirms a synced param landed.
+# `route info` stays the slim model_name/provider_model/provider view above.
+ai_litellm_model_info() {
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    echo "Missing curl or jq." >&2
+    return 1
+  fi
+
+  local master_key
+  master_key="$(ai_litellm_master_key 2>/dev/null)" || true
+  if [[ -z "$master_key" ]]; then
+    echo "Missing LiteLLM master key." >&2
+    return 1
+  fi
+
+  local model_filter="$1"
+  if [[ -n "$model_filter" ]]; then
+    model_filter="$(ai_litellm_model_resolve "$model_filter" 2>/dev/null || printf '%s\n' "$model_filter")"
+  fi
+
+  local payload
+  if ! payload="$(ai_litellm_curl_auth "$master_key" --max-time 5 -fsS "$(ai_litellm_base_url)/model/info")"; then
+    echo "LiteLLM model metadata unavailable at $(ai_litellm_base_url)/model/info; is the proxy running?" >&2
+    return 1
+  fi
+
+  if [[ -n "$model_filter" ]]; then
+    local block
+    block="$(print -r -- "$payload" \
+      | jq --arg model "$model_filter" '.data[] | select(.model_name == $model) | .model_info')"
+    if [[ -z "$block" || "$block" == "null" ]]; then
+      echo "No model_info for '$model_filter' (not present in GET /model/info; is it synced and the proxy reloaded?)." >&2
+      return 1
+    fi
+    print -r -- "$block"
+  else
+    print -r -- "$payload" | jq '[.data[] | {model_name, model_info}]'
+  fi
+}
+
 ai_litellm_probe_route() {
   local model_name="$1"
   [[ -n "$model_name" ]] || {
@@ -5633,7 +5674,7 @@ ai_litellm_cmd_model() {
   local verb="$1"; [[ $# -gt 0 ]] && shift
   case "$verb" in
     list|"")      ai_litellm_list ;;
-    info)         ai_litellm_route_info "$@" ;;
+    info)         ai_litellm_model_info "$@" ;;
     limits)       ai_litellm_limits_table "$@" ;;
     refresh-capabilities) ai_litellm_model_refresh_capabilities "$@" ;;
     reasoning)
