@@ -6138,7 +6138,9 @@ ai_litellm() {
     uninstall)    ai_litellm_uninstall "$@" ;;
     capabilities|--capabilities) ai_litellm_capabilities ;;
     dash)
-      shift
+      # NOTE: the main dispatcher already shifted the group word (line ~6123),
+      # so "$@" here is the dash args. Do NOT shift again (that dropped the
+      # first arg, e.g. --help, and silently launched the TUI instead).
       local fabric_py="$AI_LITELLM_STATE_HOME/dash-venv/bin/python"
       if [[ ! -x "$fabric_py" ]]; then
         echo "fabric: dashboard venv missing at $AI_LITELLM_STATE_HOME/dash-venv" >&2
