@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - backend logic unchanged; `--json` is output-formatter-only, additive, read-only, camelCase, empty-on-failure (`{}`/`[]`, exit 0). (spec §2, §4, §6, §9; Plan 1)
-- no new runtime language; Textual is an **optional** dependency in the `litellm` mold — preflight notes if missing, `fabric` fails loudly with the install command if missing, never fatal at install. (spec §3, §8)
+- **PLAN REVISION (venv):** Textual is isolated in a **package-owned venv**, NOT system Python (macOS Homebrew Python is PEP-668 externally-managed; the user runs litellm via pipx — same isolation philosophy). The venv lives at `$AI_LITELLM_STATE_HOME/dash-venv` (`~/.local/share/ai-litellm-fabric/state/dash-venv`), created with `python3 -m venv`, holding `textual` (+ `pytest pytest-asyncio` for tests). Define `FABRIC_PY="$AI_LITELLM_STATE_HOME/dash-venv/bin/python"`. **Every `python3 -m pytest …` and `python3 -m fabric_dash …` invocation in THIS plan uses `$FABRIC_PY`, not system `python3`.** The venv already exists on this machine (created during execution). `ai-litellm dash` runs `$FABRIC_PY -m fabric_dash`; on missing venv/textual it loud-fails with an actionable message. (spec §3, §8)
 - Python package name is `fabric_dash` (NOT `dash` — avoids the PyPI `dash` clash); lives at `config/ai-litellm/fabric_dash/`. (resolves spec §8 path loosely naming `dash/`)
 - the TUI never re-derives state and never runs mutating/billable commands in this plan. (spec §2, §5.1, §7)
 - tests make **zero** real provider/network calls; the client runner is injected with canned JSON. (spec §10)
@@ -450,8 +450,15 @@ exec "$AI_LITELLM_FABRIC_HOME/bin/ai-litellm" dash "$@"
 ```zsh
     dash)
       shift
+      local fabric_py="$AI_LITELLM_STATE_HOME/dash-venv/bin/python"
+      if [[ ! -x "$fabric_py" ]]; then
+        echo "fabric: dashboard venv missing at $AI_LITELLM_STATE_HOME/dash-venv" >&2
+        echo "  create it: python3 -m venv \"$AI_LITELLM_STATE_HOME/dash-venv\" && \"$AI_LITELLM_STATE_HOME/dash-venv/bin/pip\" install textual" >&2
+        echo "  (or re-run scripts/install.zsh)" >&2
+        return 1
+      fi
       PYTHONPATH="$AI_LITELLM_CONFIG_HOME/ai-litellm${PYTHONPATH:+:$PYTHONPATH}" \
-        command python3 -m fabric_dash "$@"
+        "$fabric_py" -m fabric_dash "$@"
       ;;
 ```
 
@@ -496,22 +503,38 @@ install_rendered "$repo_root/config/ai-litellm/fabric_dash/app.tcss" "$prefix/co
 ```
 
   2. Add `fabric` to the shim+executable loop (line 309 require list and 369 install loop): append `fabric` to both `for script in … ` lists.
-  3. In `preflight()` after the litellm note (~line 99), add a Textual note:
+  3. **Create the dashboard venv and install Textual into it** (replaces the old "note only" approach). After the package files are installed, add a `ensure_dash_venv` step that is idempotent and non-fatal (litellm-mold: a venv/textual failure prints a note, does not fail install):
 
 ```zsh
-command -v python3 >/dev/null 2>&1 && python3 -c 'import textual' >/dev/null 2>&1 || \
-  echo "note: Textual not found — needed for the 'fabric' dashboard (python3 -m pip install textual); install proceeds without it." >&2
+ensure_dash_venv() {
+  local venv="$prefix/state/dash-venv"
+  if (( dry_run )); then log "dry-run create dash venv at $venv + pip install textual"; return 0; fi
+  command -v python3 >/dev/null 2>&1 || { echo "note: python3 not found — skipping fabric dashboard venv." >&2; return 0; }
+  if [[ ! -x "$venv/bin/python" ]]; then
+    python3 -m venv "$venv" 2>/dev/null || { echo "note: could not create dashboard venv ($venv); 'fabric' will be unavailable until created." >&2; return 0; }
+  fi
+  "$venv/bin/python" -m pip install --quiet --upgrade pip >/dev/null 2>&1
+  "$venv/bin/python" -m pip install --quiet textual >/dev/null 2>&1 \
+    || echo "note: failed to install textual into $venv; run \"$venv/bin/pip install textual\" to enable 'fabric'." >&2
+}
+ensure_dash_venv
 ```
 
-> Note: `fabric_dash/tests/` should NOT be installed to `$prefix`. Exclude tests in the glob (`fabric_dash/*.py` for top level) or add a guard `[[ "$rel" == */tests/* ]] && continue` inside the loop.
+> Note: `fabric_dash/tests/` should NOT be installed to `$prefix`. Exclude tests in the glob (`fabric_dash/*.py` for top level) or add a guard `[[ "$rel" == */tests/* ]] && continue` inside the loop. The venv lives under `state/` so `uninstall.zsh` (which removes the package dir incl. state) already cleans it up — verify uninstall removes `state/dash-venv`.
 
-- [ ] **Step 2: Add check assertions** — in `scripts/check.zsh`, within the real-install-to-mktemp section, after shims are verified add:
+- [ ] **Step 2: Add check assertions** — in `scripts/check.zsh`, within the real-install-to-mktemp section, after shims are verified add. **Note:** check runs in a throwaway HOME, so it builds its OWN throwaway venv to test the module (don't reuse the user's). Skip gracefully if venv creation/textual isn't possible offline:
 
 ```zsh
 [[ -x "$tmp_bin/fabric" ]] || { echo "FAIL: fabric shim missing"; exit 1; }
-PYTHONPATH="$tmp_prefix/config/ai-litellm" python3 -m fabric_dash --help >/dev/null 2>&1 \
-  || { echo "FAIL: fabric_dash module not importable / --help failed"; exit 1; }
-echo "ok: fabric shim + module"
+# module import check using a throwaway venv with textual (skip if offline/unavailable)
+tmp_venv="$tmp_prefix/state/dash-venv"
+if [[ -x "$tmp_venv/bin/python" ]] && "$tmp_venv/bin/python" -c 'import textual' 2>/dev/null; then
+  PYTHONPATH="$tmp_prefix/config/ai-litellm" "$tmp_venv/bin/python" -m fabric_dash --help >/dev/null 2>&1 \
+    || { echo "FAIL: fabric_dash --help failed under dash venv"; exit 1; }
+  echo "ok: fabric shim + module (venv)"
+else
+  echo "note: skipping fabric_dash module check (dash venv/textual unavailable in check env)" >&2
+fi
 ```
 
 > Note: use the same temp prefix/bin variable names the surrounding check.zsh install block already defines; read that block and match its variable names (it installs into an `mktemp` HOME).
