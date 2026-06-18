@@ -327,6 +327,22 @@ ai-litellm context doctor
 ai-litellm proxy doctor
 ```
 
+## Machine-readable output
+
+Read-only commands accept `--json` for scripting and the `fabric` dashboard:
+
+```zsh
+ai-litellm proxy status --json
+ai-litellm model list --json
+ai-litellm model limits [model] --json
+ai-litellm harness list --json
+ai-litellm harness info <name> --json
+ai-litellm key status --json
+```
+
+`--json` is additive: without it, output is unchanged human text. It is only
+available on read-only commands.
+
 ## Maintenance Boundary
 
 When adding or changing models:
