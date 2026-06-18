@@ -2356,7 +2356,7 @@ ai_litellm_route_list_json() {
   [[ -n "$master_key" ]] || { printf '[]'; return 0; }
   local payload result
   payload="$(ai_litellm_curl_auth "$master_key" --max-time 5 -fsS "$(ai_litellm_base_url)/model/info" 2>/dev/null)" || { printf '[]'; return 0; }
-  result="$(printf '%s\n' "$payload" | jq -c '[.data[]? | {modelName: .model_name, providerModel: (.litellm_params.model // .model_name), provider: (.litellm_params.custom_llm_provider // (.litellm_params.model // "" | split("/")[0]))}]' 2>/dev/null)" || { printf '[]'; return 0; }
+  result="$(printf '%s\n' "$payload" | jq -c '[.data[]? | {modelName: .model_name, providerModel: (.litellm_params.model // .model_name), provider: (.model_info.litellm_provider // (.litellm_params.custom_llm_provider // ""))}]' 2>/dev/null)" || { printf '[]'; return 0; }
   printf '%s' "${result:-[]}"
 }
 
@@ -3886,6 +3886,7 @@ for entry in config.get("model_list") or []:
         "declared": "yes" if declared else "no",
         "litellmCap": local_label,
         "default": provider_default(entry),
+        "effort": provider_default(entry),
         "localWire": local_wire(declared, params),
         "dropRisk": drop_risk(declared, local_supported, raw_observed_for(name, backend)),
         "observed": observed_for(name, backend),
