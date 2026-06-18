@@ -162,6 +162,24 @@ ks_json="$("$HOME/.local/bin/ai-litellm" key status --json 2>/dev/null)"
 assert_json_key "key status --json" "$ks_json" openrouter
 assert_json_key "key status --json" "$ks_json" master
 echo "ok: harness/key --json"
+# ── --json contract: harness info ────────────────────────────────────────────
+# B1: harness info --json (no name) must emit {} and exit 0
+hi_empty="$("$HOME/.local/bin/ai-litellm" harness info --json 2>/dev/null)"
+[[ "$hi_empty" == "{}" ]] || { echo "FAIL: harness info --json (no name) did not emit {}; got: $hi_empty"; exit 1; }
+echo "ok: harness info --json no-name = {}"
+# B2: harness info <name> --json baseUrl must contain http and no {{ templates
+hi_claude="$("$HOME/.local/bin/ai-litellm" harness info claude --json 2>/dev/null)"
+node -e "const o=JSON.parse(process.argv[1]);const u=o.baseUrl||\"\";\
+if(!u.includes(\"http\")){console.error(\"baseUrl missing http: \"+u);process.exit(1)}\
+if(u.includes(\"{{\")){console.error(\"baseUrl has unresolved template: \"+u);process.exit(1)}" "$hi_claude" \
+  || { echo "FAIL: harness info claude --json baseUrl not resolved"; exit 1; }
+echo "ok: harness info claude --json baseUrl resolved"
+# M1: isolationEnv key present, isolation key absent
+node -e "const o=JSON.parse(process.argv[1]);\
+if(!(\"isolationEnv\" in o)){console.error(\"missing isolationEnv\");process.exit(1)}\
+if(\"isolation\" in o){console.error(\"stale isolation key still present\");process.exit(1)}" "$hi_claude" \
+  || { echo "FAIL: harness info claude --json isolationEnv key wrong"; exit 1; }
+echo "ok: harness info claude --json isolationEnv key"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.

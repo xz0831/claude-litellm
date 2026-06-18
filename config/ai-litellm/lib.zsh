@@ -1192,16 +1192,17 @@ ai_litellm_harness_info() {
 
 ai_litellm_harness_one_json() {
   local name="$1"
-  local adapter command baseurl isolation valid="@bool:false" cli="@bool:false"
+  local adapter command baseurl isolationenv valid="@bool:false" cli="@bool:false"
   adapter="$(ai_litellm_harness_json "$name" adapter 2>/dev/null || true)"
   command="$(ai_litellm_harness_json "$name" command 2>/dev/null || true)"
   baseurl="$(ai_litellm_harness_json "$name" provider.baseUrl 2>/dev/null || true)"
-  isolation="$(ai_litellm_harness_json "$name" isolation.env 2>/dev/null || true)"
+  [[ -n "$baseurl" ]] && baseurl="$(ai_litellm_template_value "$baseurl")"
+  isolationenv="$(ai_litellm_harness_json "$name" isolation.env 2>/dev/null || true)"
   ai_litellm_harness_validate "$name" >/dev/null 2>&1 && valid="@bool:true"
   ai_litellm_harness_cli_available "$name" >/dev/null 2>&1 && cli="@bool:true"
   ai_litellm_emit_json \
     name "$name" adapter "${adapter:-}" command "${command:-}" \
-    baseUrl "${baseurl:-}" isolation "${isolation:-}" valid "$valid" cliInstalled "$cli"
+    baseUrl "${baseurl:-}" isolationEnv "${isolationenv:-}" valid "$valid" cliInstalled "$cli"
 }
 
 ai_litellm_harnesses_json() {
@@ -2435,6 +2436,7 @@ ai_litellm_key_status() {
   litellm-master-key-status
 }
 
+# Mirror of openrouter-key-status / litellm-master-key-status detection order — keep in sync.
 ai_litellm_key_source() {
   local key="$1"
   case "$key" in
@@ -3361,7 +3363,7 @@ Array(config && config["model_list"]).each do |entry|
     "context" => ctx,
     "output" => out,
     "effectiveInput" => eff,
-    "sources" => {"context" => mi["x_input_source"], "output" => mi["x_output_source"]}
+    "sources" => {"context" => (mi["x_input_confidence"] || "local-config"), "output" => (mi["x_output_confidence"] || "local-config")}
   }
 end
 print JSON.generate(rows)
@@ -5799,7 +5801,8 @@ ai_litellm_cmd_harness() {
       if [[ "${1:-}" == "--json" ]]; then ai_litellm_harnesses_json; else ai_litellm_harnesses; fi
       ;;
     info)
-      if [[ "${2:-}" == "--json" ]]; then ai_litellm_harness_info_json "$1"
+      if [[ "${1:-}" == "--json" ]]; then ai_litellm_harness_info_json "${2:-}"
+      elif [[ "${2:-}" == "--json" ]]; then ai_litellm_harness_info_json "$1"
       else ai_litellm_harness_info "$@"; fi
       ;;
     launch)  ai_litellm_launch "$@" ;;
