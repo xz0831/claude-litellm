@@ -40,9 +40,33 @@ async def test_restart_action_blocked_until_confirm():
         assert calls == []              # cancelled -> still nothing
         await pilot.press("s")
         await pilot.pause()
-        await pilot.press("enter")      # confirm
+        # Guarded (restart) modal defaults focus to Cancel — a reflexive Enter
+        # must NOT fire the disruptive action.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert calls == []              # Enter on default Cancel -> still nothing
+        await pilot.press("s")
+        await pilot.pause()
+        # Deliberate confirm: Tab to the Confirm button, then activate it.
+        await pilot.press("tab")
+        await pilot.press("enter")
         await pilot.pause()
         assert calls and calls[0][:2] == ["ai-litellm", "sync"]
+
+
+@pytest.mark.asyncio
+async def test_restart_modal_defaults_focus_to_cancel():
+    from fabric_dash.app import FabricApp
+    from fabric_dash.modal import ConfirmModal
+    app = FabricApp(client=_client(), runner=ActionRunner(spawn=lambda a: (0, [])))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("s")          # restart-grade modal
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConfirmModal)
+        assert app.focused is not None and app.focused.id == "confirm-no"
+        await pilot.press("escape")
 
 
 @pytest.mark.asyncio

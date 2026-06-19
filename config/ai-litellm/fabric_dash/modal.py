@@ -4,23 +4,46 @@ from textual.screen import ModalScreen
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Button
 
+# Grades that interrupt active work — default focus to Cancel so a reflexive
+# Enter can't fire a disruptive action. (mirrors safety.RESTART / DESTRUCTIVE)
+_GUARDED = {"restart", "destructive"}
+
 
 class ConfirmModal(ModalScreen):
-    BINDINGS = [("escape", "cancel", "Cancel"), ("enter", "confirm", "Confirm")]
+    # No global enter->confirm: Enter activates the *focused* button instead,
+    # and for guarded actions that button is Cancel.
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, consequence: str):
+    def __init__(self, consequence: str, title: str = "Confirm action", grade: str = "restart"):
         super().__init__()
         self._consequence = consequence
+        self._title = title
+        self._grade = (grade or "").lower()
+
+    @property
+    def _guarded(self) -> bool:
+        return self._grade in _GUARDED
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="confirm-box"):
-            yield Static(f"! {self._consequence}", id="confirm-msg")
-            with Horizontal():
-                yield Button("Confirm", id="confirm-yes", variant="warning")
-                yield Button("Cancel", id="confirm-no", variant="primary")
+        box = Vertical(id="confirm-box")
+        # destructive gets the error border; everything else the warning border
+        box.add_class("destructive" if self._grade == "destructive" else "restart")
+        with box:
+            yield Static(self._title, id="confirm-title")
+            yield Static(self._consequence, id="confirm-msg")
+            with Horizontal(id="confirm-buttons"):
+                # Cancel first for guarded grades so it reads (and tabs) as the default.
+                if self._guarded:
+                    yield Button("Cancel", id="confirm-no", variant="primary")
+                    yield Button("Confirm", id="confirm-yes", variant="warning")
+                else:
+                    yield Button("Confirm", id="confirm-yes", variant="warning")
+                    yield Button("Cancel", id="confirm-no", variant="primary")
 
-    def action_confirm(self) -> None:
-        self.dismiss(True)
+    def on_mount(self) -> None:
+        # Focus the safe choice for guarded actions; otherwise focus Confirm.
+        target = "#confirm-no" if self._guarded else "#confirm-yes"
+        self.query_one(target, Button).focus()
 
     def action_cancel(self) -> None:
         self.dismiss(False)
