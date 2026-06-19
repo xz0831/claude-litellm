@@ -87,9 +87,11 @@ if ai_litellm_assert_rendered_path "__FABRIC_HOME__/state/goose-litellm" "test" 
   exit 1
 fi
 ai_litellm_assert_rendered_path "$prefix/state/goose-litellm" "test"
-runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown gemma4-12b)"
+runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown local-omlx-gemma4-12b)"
 [[ "$runtime_routes_dry" == *"MarkItDown-omlx -> openai/MarkItDown"* ]]
-[[ "$runtime_routes_dry" != *"gemma4-12b"* ]]
+# Gemma4-12B-omlx registry entry serves openai/local-omlx-gemma4-12b, so the
+# discovered route for it must be deduped (absent from the dry output).
+[[ "$runtime_routes_dry" != *"local-omlx-gemma4-12b-omlx"* ]]
 # Robustness: a runtime that is reachable but whose /v1/models returns an
 # UNPARSEABLE body must NOT silently wipe existing discovered routes — discovery
 # failure (rc!=0) is distinct from a genuine empty model list and must skip the
@@ -215,7 +217,7 @@ ai_litellm_model_info_anchor_refs_ok
 for harness in "${(@f)$(ai_litellm_harness_names)}"; do
   ai_litellm_harness_validate "$harness"
 done
-ai_litellm_model_limits GLM-5.1-openrouter >/dev/null
+ai_litellm_model_limits GLM-5.2-openrouter >/dev/null
 ai_litellm_context_gateway_clamp_policy_ok
 ai_litellm_context_gateway_clamp_configured
 # Output-reservation policy must agree across all descriptors + the gateway copy.
@@ -233,7 +235,7 @@ ai_litellm_context_gateway_cost_guardrail_configured
 ai_litellm_context_observations_ok
 ai_litellm_model_info_anchor_refs_ok
 openrouter_models_fixture="$HOME/openrouter-models.json"
-print -r -- "{\"data\":[{\"id\":\"deepseek/deepseek-v4-pro\",\"context_length\":1048576,\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":384000},\"supported_parameters\":[\"reasoning\"]},{\"id\":\"moonshotai/kimi-k2.6\",\"context_length\":262144,\"top_provider\":{\"context_length\":262142,\"max_completion_tokens\":262142},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]},{\"id\":\"z-ai/glm-5.1\",\"context_length\":202752,\"top_provider\":{\"context_length\":202752,\"max_completion_tokens\":null},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]}]}" > "$openrouter_models_fixture"
+print -r -- "{\"data\":[{\"id\":\"deepseek/deepseek-v4-pro\",\"context_length\":1048576,\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":384000},\"supported_parameters\":[\"reasoning\"]},{\"id\":\"moonshotai/kimi-k2.6\",\"context_length\":262144,\"top_provider\":{\"context_length\":262142,\"max_completion_tokens\":262142},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]},{\"id\":\"z-ai/glm-5.2\",\"context_length\":1048576,\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":131072},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]}]}" > "$openrouter_models_fixture"
 export AI_LITELLM_OPENROUTER_MODELS_JSON="$openrouter_models_fixture"
 ai_litellm_model_refresh_capabilities --check >/dev/null
 ai_litellm_model_policy_audit >/dev/null
@@ -284,9 +286,9 @@ test "$(ai_litellm_harness_json codex models.default)" = "gpt-5.5"
 budget="$(ai_litellm_harness_output_budget claude sonnet Kimi-K2.6-openrouter)"
 test "$(print -r -- "$budget" | jq -r ".effectiveInput > 0 and .reservation < .capability")" = "true"
 codex_budget="$(ai_litellm_harness_output_budget codex gpt-5.4 gpt-5.4)"
-test "$(print -r -- "$codex_budget" | jq -r ".effectiveInput")" = "221950"
+test "$(print -r -- "$codex_budget" | jq -r ".effectiveInput")" = "1008384"
 codex_catalog_map="$(ai_litellm_codex_catalog_context_map codex)"
-test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4\"")" = "221950"
+test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4\"")" = "1008384"
 test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4-mini\"")" = "221950"
 test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.5\"")" = "1008384"
 test "$(print -r -- "$codex_catalog_map" | jq -r ".\"Gemma4-12B-omlx\"")" = "8192"
@@ -294,7 +296,7 @@ codex_catalog="$(ai_litellm_harness_json codex paths.modelCatalog)"
 mkdir -p "${codex_catalog:h}"
 print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":262144}]}" > "$codex_catalog"
 ! ai_litellm_doctor_limit_sync >/dev/null 2>&1
-print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":221950}]}" > "$codex_catalog"
+print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":1008384}]}" > "$codex_catalog"
 ai_litellm_doctor_limit_sync >/dev/null
 ai_litellm_render_claude_settings claude
 claude_settings="$(ai_litellm_harness_json claude paths.settingsArg)"
@@ -382,8 +384,8 @@ direct_output="$(PATH="$stub_dir:$PATH" OPENROUTER_API_KEY="TEST_OPENROUTER" cla
 [[ "$direct_output" == *"max_tokens_set=0"* ]]
 [[ "$direct_output" == *"sonnet=moonshotai/kimi-k2.6"* ]]
 [[ "$direct_output" == *"sonnet_name=Kimi-K2.6 (openrouter)"* ]]
-[[ "$direct_output" == *"haiku=z-ai/glm-5.1"* ]]
-[[ "$direct_output" == *"haiku_name=GLM-5.1 (openrouter)"* ]]
+[[ "$direct_output" == *"haiku=z-ai/glm-5.2"* ]]
+[[ "$direct_output" == *"haiku_name=GLM-5.2 (openrouter)"* ]]
 [[ "$direct_output" == *"subagent=deepseek/deepseek-v4-pro"* ]]
 [[ "$direct_output" == *"caps=0:"* ]]
 [[ "$direct_output" == *"--model sonnet"* ]]
@@ -429,8 +431,8 @@ mv "$caps_settings.tmp" "$caps_settings"
   [[ "$proxy_output" == *"max_tokens_set=1"* ]]
   [[ "$proxy_output" == *"sonnet=Kimi-K2.6-openrouter"* ]]
   [[ "$proxy_output" == *"sonnet_name=Kimi-K2.6 (openrouter)"* ]]
-  [[ "$proxy_output" == *"haiku=Qwen3.6-27B-omlx"* ]]
-  [[ "$proxy_output" == *"haiku_name=Qwen3.6-27B (omlx)"* ]]
+  [[ "$proxy_output" == *"haiku=Gemma4-12B-omlx"* ]]
+  [[ "$proxy_output" == *"haiku_name=Gemma4-12B (omlx)"* ]]
   [[ "$proxy_output" == *"caps=1:"* ]]
   [[ "$proxy_output" == *"--model sonnet"* ]]
 )
@@ -442,11 +444,11 @@ goose_model_blocked="$(ai_litellm_launch_env_injector goose DeepSeek-V4-Pro-open
 [[ "$goose_model_blocked" == *"blocked"* ]]
 "$HOME/.local/bin/claude-litellm" --status >/dev/null
 source "$prefix/config/codex-litellm/shell.zsh"
-test "$(_codex_litellm_resolve_model openrouter/deepseek/deepseek-v4-pro)" = "gpt-5.5"
-test "$(_codex_litellm_resolve_model DeepSeek-V4-Pro-openrouter)" = "gpt-5.5"
-test "$(_codex_litellm_resolve_model openrouter/moonshotai/kimi-k2.6)" = "gpt-5.4"
-test "$(_codex_litellm_resolve_model openai/gemma4-12b)" = "Gemma4-12B-omlx"
-test "$(_codex_litellm_resolve_model Gemma4-12B-omlx)" = "Gemma4-12B-omlx"
+test "$(_codex_litellm_resolve_model openrouter/deepseek/deepseek-v4-pro)" = "gpt-5.4"
+test "$(_codex_litellm_resolve_model DeepSeek-V4-Pro-openrouter)" = "gpt-5.4"
+test "$(_codex_litellm_resolve_model openrouter/moonshotai/kimi-k2.6)" = "gpt-5.4-mini"
+test "$(_codex_litellm_resolve_model openai/local-omlx-gemma4-12b)" = "gpt-5.3-codex"
+test "$(_codex_litellm_resolve_model Gemma4-12B-omlx)" = "gpt-5.3-codex"
 # Pre-flight: a codex binary that cannot start (e.g. the macOS-Tahoe dyld hang)
 # must make a session launch fail LOUD + fast, never hang. A hanging stub proves
 # the bounded probe times out and reports actionably; an instant stub passes.
