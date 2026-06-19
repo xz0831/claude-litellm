@@ -2,6 +2,12 @@
 
 set -euo pipefail
 
+# check.zsh never reads stdin. Pin it to /dev/null so any command that would
+# otherwise fall back to reading stdin (e.g. a jq whose `< file` redirect is
+# lost in a nested `zsh -fc` quoting context) gets immediate EOF instead of
+# blocking forever when check runs non-interactively (background/CI/no TTY).
+exec </dev/null
+
 repo_root="${0:A:h:h}"
 real_home="$HOME"
 
