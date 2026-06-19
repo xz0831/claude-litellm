@@ -46,6 +46,10 @@ class FabricApp(App):
             yield tree
             yield Static("", id="content")
         yield RichLog(id="results", highlight=False, markup=True)
+        yield Static(
+            "[s]ync [R]estart [S]tart [x]stop [d]octor [l]aunch — ⚠ confirms on restart/billable",
+            id="action-legend",
+        )
         yield Footer()
 
     def on_mount(self) -> None:

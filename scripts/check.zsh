@@ -543,4 +543,13 @@ if HOME="$spaced_home" "$repo_root/scripts/uninstall.zsh" --prefix "$spaced_home
   exit 1
 fi
 
+dash_venv_python="${real_home}/.local/share/ai-litellm-fabric/state/dash-venv/bin/python"
+if [[ -x "$dash_venv_python" ]] && "$dash_venv_python" -c 'import textual, pytest' >/dev/null 2>&1; then
+  ( cd "$repo_root/config/ai-litellm" && "$dash_venv_python" -m pytest fabric_dash/tests/ -q ) \
+    || { echo "FAIL: fabric_dash tests"; exit 1; }
+  echo "ok: fabric_dash tests"
+else
+  echo "note: skipping fabric_dash tests (textual/pytest not installed)" >&2
+fi
+
 echo "ok"
