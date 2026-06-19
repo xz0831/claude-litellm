@@ -38,7 +38,7 @@ x-limits:
     x_reasoning_source: openrouter.supported_parameters
   glm52: &glm52
     max_input_tokens: 1048576
-    max_output_tokens: 65536
+    max_output_tokens: 131072
     supports_reasoning: true
     x_input_confidence: provider
     x_input_source: openrouter.top_provider.context_length
@@ -109,12 +109,22 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY
     model_info: *kimi_k26
 
-  # Codex local-backed facade: the bundled-catalog slug gpt-5.3-codex-spark
-  # routes to the local oMLX gemma. Local route (api_key: none) -> exempt from
-  # codex catalog window reduction; haiku-grade conservative caps via gemma anchor.
-  - model_name: gpt-5.3-codex-spark
+  # gpt-5.2: a --bundled codex catalog slug; codex-litellm offers every bundled
+  # slug, so it needs a route. Mirrors gpt-5.5 -> GLM-5.2.
+  - model_name: gpt-5.2
     litellm_params:
-      model: openai/gemma4-12b
+      model: openrouter/z-ai/glm-5.2
+      api_key: os.environ/OPENROUTER_API_KEY
+    model_info: *glm52
+
+  # Codex local-backed facade: the --bundled slug gpt-5.3-codex routes to the
+  # local oMLX gemma. Local route (api_key: none) -> exempt from codex catalog
+  # window reduction; haiku-grade conservative caps via the gemma anchor.
+  # (Native codex's active catalog renames this gpt-5.3-codex-spark, but the
+  # isolated, logged-out codex-litellm only sees the --bundled gpt-5.3-codex.)
+  - model_name: gpt-5.3-codex
+    litellm_params:
+      model: openai/local-omlx-gemma4-12b
       api_base: http://127.0.0.1:8000/v1
       api_key: none
     model_info: *gemma_local
@@ -129,7 +139,7 @@ model_list:
   # discovered local routes are managed by ai-litellm metadata/sync.
   - model_name: Gemma4-12B-omlx
     litellm_params:
-      model: openai/gemma4-12b
+      model: openai/local-omlx-gemma4-12b
       api_base: http://127.0.0.1:8000/v1
       api_key: none
     model_info: *gemma_local
