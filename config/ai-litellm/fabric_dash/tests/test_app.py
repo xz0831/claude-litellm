@@ -498,7 +498,7 @@ async def test_run_argv_safe_runs_without_modal_and_logs():
         await pilot.pause()
         await app._run_argv(["proxy", "start"], label="start proxy")  # SAFE → no modal
         await pilot.pause()
-        assert calls and calls[0] == ["ai-litellm", "proxy", "start"]
+        assert calls == [["ai-litellm", "proxy", "start"]]
         # not asserting modal absence beyond: the call completed inline (no hang)
 
 
@@ -518,7 +518,7 @@ async def test_run_argv_restart_goes_through_confirm_modal():
         assert isinstance(app.screen, ConfirmModal)   # RESTART → gated, not yet run
         assert calls == []
         await pilot.press("tab"); await pilot.press("enter"); await pilot.pause()
-        assert calls and calls[0] == ["ai-litellm", "proxy", "restart"]
+        assert calls == [["ai-litellm", "proxy", "restart"]]
 
 
 @pytest.mark.asyncio
@@ -609,7 +609,7 @@ async def test_palette_runs_safe_command_without_modal():
         for ch in "start":                  # filter -> "start proxy" (SAFE)
             await pilot.press(ch)
         await pilot.press("enter"); await pilot.pause()  # select+run, no modal
-        assert calls and calls[0] == ["ai-litellm", "proxy", "start"]
+        assert calls == [["ai-litellm", "proxy", "start"]]
 
 
 @pytest.mark.asyncio
@@ -629,4 +629,4 @@ async def test_palette_restart_command_goes_through_confirm_modal():
         assert isinstance(app.screen, ConfirmModal)
         assert calls == []                               # not run until confirmed
         await pilot.press("tab"); await pilot.press("enter"); await pilot.pause()
-        assert calls and calls[0] == ["ai-litellm", "proxy", "restart"]
+        assert calls == [["ai-litellm", "proxy", "restart"]]
