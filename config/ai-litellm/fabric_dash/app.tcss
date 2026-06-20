@@ -19,16 +19,25 @@
 #body { height: 1fr; }
 
 Tree {
-    width: 28;
-    border-right: solid $primary;
+    width: 30;
+    border: round $primary 50%;
+    border-title-color: $secondary;
     padding: 0 1;
 }
 
-#content { width: 1fr; padding: 0 1; }
+#content {
+    width: 1fr;
+    height: 1fr;
+    border: round $primary 50%;
+    border-title-color: $secondary;
+    padding: 0 1;
+}
 
 #data-table {
     width: 1fr;
     height: 1fr;
+    border: round $primary 50%;
+    border-title-color: $secondary;
 }
 /* Header row hierarchy: bold + accent, distinct from body. */
 #data-table > .datatable--header {
@@ -42,7 +51,8 @@ Tree {
 
 #results {
     height: 8;
-    border-top: solid $primary;
+    border: round $primary 50%;
+    border-title-color: $secondary;
     padding: 0 1;
 }
 

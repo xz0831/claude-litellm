@@ -4,6 +4,7 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
+from textual.theme import Theme
 from textual.widgets import Header, Tree, Static, RichLog, DataTable
 from textual import work
 from .client import FabricClient
@@ -11,6 +12,19 @@ from .safety import ACTIONS, BILLABLE, SAFE
 from .actions import ActionRunner
 from .modal import ConfirmModal
 from .footer import StatusFooter, FooterItem
+
+_FABRIC_THEME = Theme(
+    name="fabric",
+    primary="#4c9aff",      # calm steel-blue accent (panels/borders)
+    secondary="#9aa7b3",    # muted slate (titles/headers)
+    success="#3fb950",      # green  = ok / ready
+    warning="#d29922",      # amber  = stale / disruptive
+    error="#f85149",        # red    = fail / missing / billable
+    background="#0d1117",
+    surface="#161b22",
+    panel="#1c2128",
+    dark=True,
+)
 
 CONCEPTS = [
     ("proxy", "Proxy"),
@@ -136,6 +150,10 @@ class FabricApp(App):
         yield StatusFooter(id="footer")
 
     def on_mount(self) -> None:
+        self.register_theme(_FABRIC_THEME)
+        self.theme = "fabric"
+        self.query_one("#concepts", Tree).border_title = "Concepts"
+        self.query_one("#results", RichLog).border_title = "Results"
         self.query_one("#footer", StatusFooter).set_items(self._footer_items())
         self.refresh_status()
         self.show_panel("proxy")
@@ -181,6 +199,10 @@ class FabricApp(App):
     def show_panel(self, node_id: str) -> None:
         content = self.query_one("#content", Static)
         table = self.query_one("#data-table", DataTable)
+        # Set the panel title to the human label for this concept node.
+        title = next((lbl for nid, lbl in CONCEPTS if nid == node_id), node_id)
+        content.border_title = title
+        table.border_title = title
         # Default: text panel visible, table hidden.
         content.display = True
         table.display = False
