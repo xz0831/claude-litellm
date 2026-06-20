@@ -630,3 +630,83 @@ async def test_palette_restart_command_goes_through_confirm_modal():
         assert calls == []                               # not run until confirmed
         await pilot.press("tab"); await pilot.press("enter"); await pilot.pause()
         assert calls == [["ai-litellm", "proxy", "restart"]]
+
+
+@pytest.mark.asyncio
+async def test_effort_selector_picks_effort():
+    from fabric_dash.effort_modal import EffortSelector
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(EffortSelector(["low", "high", "xhigh"], "GLM-5.2"))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("down")          # move to "high" (index 1)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert captured["c"] == "high"
+
+@pytest.mark.asyncio
+async def test_effort_selector_unset_and_cancel():
+    from fabric_dash.effort_modal import EffortSelector
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(EffortSelector(["low"], "claude"))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("escape"); await pilot.pause()
+        assert captured["c"] is None
+
+
+@pytest.mark.asyncio
+async def test_effort_selector_unset_row_returns_unset():
+    from fabric_dash.effort_modal import EffortSelector
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(EffortSelector(["low"], "claude"))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("down")          # choices are ["low", "unset"]; move to "unset"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert captured["c"] == "unset"
+
+
+@pytest.mark.asyncio
+async def test_effort_action_on_models_runs_reasoning_set():
+    calls = []
+    def spawn(argv):
+        calls.append(argv); return (0, ["Run 'ai-litellm sync' to apply it to the running proxy."])
+    from fabric_dash.actions import ActionRunner
+    client = make_client()
+    # client.model_reasoning_allowed returns something non-empty
+    app = FabricApp(client=client, runner=ActionRunner(spawn=spawn))
+    app.client.model_reasoning_allowed = lambda m: ["low", "high"]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_panel("models"); app._selected = "models"
+        await pilot.pause()   # drain initial row-highlighted; then pin the target model
+        app._selected_model = "GLM-5.2"
+        await pilot.press("e"); await pilot.pause()      # opens EffortSelector
+        from fabric_dash.effort_modal import EffortSelector
+        assert isinstance(app.screen, EffortSelector)
+        await pilot.press("down"); await pilot.press("enter"); await pilot.pause()  # pick "high"
+        assert calls == [["ai-litellm", "model", "reasoning", "set", "GLM-5.2", "high"]]
+
+@pytest.mark.asyncio
+async def test_effort_action_guards_when_no_selection():
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected = "proxy"            # not a reasoning panel
+        await pilot.press("e"); await pilot.pause()
+        from fabric_dash.effort_modal import EffortSelector
+        assert not isinstance(app.screen, EffortSelector)   # guarded, no modal
