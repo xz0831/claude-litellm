@@ -306,6 +306,23 @@ def test_cell_formats_scalars_and_none():
 
 
 @pytest.mark.asyncio
+async def test_help_overlay_opens_and_lists_keys():
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("?")
+        await pilot.pause()
+        from fabric_dash.help import HelpOverlay
+        assert isinstance(app.screen, HelpOverlay)
+        text = app.screen.query_one("#help-body").content
+        body = text.plain if hasattr(text, "plain") else str(text)
+        for token in ("sync", "restart", "launch", "doctor", "quit"):
+            assert token in body
+        await pilot.press("escape"); await pilot.pause()
+        assert not isinstance(app.screen, HelpOverlay)
+
+
+@pytest.mark.asyncio
 async def test_action_bar_is_contextual_per_panel():
     """launch appears on harnesses panel only; sync appears on all panels."""
     app = FabricApp(client=make_client())

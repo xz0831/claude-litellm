@@ -69,6 +69,19 @@ Tree {
     padding: 0 1;
 }
 
+/* ── help overlay: full keymap, read-only, dismissed by ?/esc/q ────────*/
+HelpOverlay {
+    align: center middle;
+    background: $background 60%;
+}
+
+#help-body {
+    width: 60;
+    padding: 1 2;
+    background: $surface;
+    border: round $primary;
+}
+
 /* ── confirm modal: the primary safety surface ─────────────────────────*/
 ConfirmModal {
     align: center middle;

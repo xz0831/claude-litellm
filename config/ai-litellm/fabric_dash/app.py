@@ -97,7 +97,7 @@ class FabricApp(App):
     CSS_PATH = Path(__file__).parent / "app.tcss"
     TITLE = "ai-litellm fabric"
     BINDINGS = (
-        [("q", "quit", "Quit"), ("r", "refresh", "Refresh"), ("l", "launch", "Launch")]
+        [("q", "quit", "Quit"), ("r", "refresh", "Refresh"), ("l", "launch", "Launch"), ("question_mark", "help", "Help")]
         + [(a.key, f"do_{a.key}", a.label) for a in ACTIONS]
     )
 
@@ -109,7 +109,7 @@ class FabricApp(App):
         Contextual: launch (billable) appears ONLY on the harnesses panel —
         it is the harnesses panel's primary action, and meaningless elsewhere.
         Reuses each action's safety grade so color encodes risk consistently."""
-        # Read-only group: quit, refresh, and the SAFE actions (start, doctor).
+        # Read-only group: quit, refresh, the SAFE actions (start, doctor), and help.
         items = [
             FooterItem("q", "quit", "quit", False),
             FooterItem("r", "refresh", SAFE, False),
@@ -118,6 +118,7 @@ class FabricApp(App):
             FooterItem(a.key, a.label, a.grade, False)
             for a in ACTIONS if a.grade == SAFE
         ]
+        items.append(FooterItem("?", "help", SAFE, False))
         # Mutating group: launch only on harnesses, then the non-SAFE actions.
         if node_id == "harnesses":
             items.append(FooterItem("l", "launch", BILLABLE, True))
@@ -173,6 +174,10 @@ class FabricApp(App):
     def action_refresh(self) -> None:
         self.refresh_status()
         self.show_panel(self._selected)
+
+    def action_help(self) -> None:
+        from .help import HelpOverlay
+        self.push_screen(HelpOverlay())
 
     def refresh_status(self) -> None:
         s = self.client.proxy_status()
