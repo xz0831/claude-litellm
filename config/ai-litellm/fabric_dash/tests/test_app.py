@@ -710,3 +710,41 @@ async def test_effort_action_guards_when_no_selection():
         await pilot.press("e"); await pilot.pause()
         from fabric_dash.effort_modal import EffortSelector
         assert not isinstance(app.screen, EffortSelector)   # guarded, no modal
+
+
+@pytest.mark.asyncio
+async def test_key_modal_pick_then_masked_secret_returns_tuple():
+    from fabric_dash.key_modal import KeySetModal
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(KeySetModal(["openrouter", "master"]))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("enter")              # pick first provider (openrouter) -> secret mode
+        await pilot.pause()
+        from textual.widgets import Input
+        inp = app.screen.query_one(Input)
+        assert inp.password is True             # masked
+        for ch in "sk-xyz":
+            await pilot.press(ch if ch != "-" else "minus")
+        await pilot.press("enter")              # submit
+        await pilot.pause()
+        provider, secret = captured["c"]
+        assert provider == "openrouter" and secret == "sk-xyz"
+
+@pytest.mark.asyncio
+async def test_key_modal_escape_cancels():
+    from fabric_dash.key_modal import KeySetModal
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(KeySetModal(["openrouter"]))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("escape"); await pilot.pause()
+        assert captured["c"] is None
