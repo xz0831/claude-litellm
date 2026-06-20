@@ -374,7 +374,7 @@ class FabricApp(App):
         return None
 
     async def _run_argv(self, argv: list[str], label: str | None = None,
-                        consequence: str | None = None) -> None:
+                        consequence: str | None = None, stdin_input: str | None = None) -> None:
         """Shared command execution core: gate by classify(argv), offload the
         blocking subprocess off the event loop, stream results to the log.
         Awaited from a worker (callers are @work) so push_screen_wait works."""
@@ -389,9 +389,9 @@ class FabricApp(App):
                 self.query_one("#results", RichLog).write(f"[dim]cancelled: {name}[/]")
                 return
         log = self.query_one("#results", RichLog)
-        log.write(f"$ ai-litellm {' '.join(argv)}")
+        log.write(f"$ ai-litellm {' '.join(argv)}")  # argv carries NO secret (it is in stdin_input)
         lines: list[str] = []
-        rc = await asyncio.to_thread(self.runner.run, list(argv), lines.append)
+        rc = await asyncio.to_thread(self.runner.run, list(argv), lines.append, stdin_input)
         for ln in lines:
             log.write(ln)
         log.write(f"[{'green' if rc == 0 else 'red'}]exit {rc}[/]")
