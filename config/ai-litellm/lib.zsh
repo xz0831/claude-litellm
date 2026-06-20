@@ -6092,27 +6092,29 @@ ai_litellm_usage() {
   cat <<'EOF'
 Usage: ai-litellm <group> <verb> [args]
 
-  Proxy:    ai-litellm proxy status|start|stop|restart|logs [lines]|doctor [opts]
-  Harness:  ai-litellm harness list|info <name>|launch <name> [model] [args...]
-            ai-litellm harness reasoning [name]
-            ai-litellm harness reasoning set <name> <effort>
-            ai-litellm harness reasoning unset <name>
-  Runtime:  ai-litellm runtime list|status [name]|doctor <name>
-  Model:    ai-litellm model list|info [model]|limits [model]|refresh-capabilities [opts]|probe <model...>|capabilities
-            ai-litellm model reasoning probe <model> [effort]
-            ai-litellm model reasoning set <model> <effort>
-            ai-litellm model reasoning unset <model>
-  Effort:   OpenRouter none|minimal|low|medium|high|xhigh; Claude auto|low|medium|high|xhigh|max;
-            Codex low|medium|high|xhigh; OpenCode auto|none|minimal|low|medium|high|max; Goose auto|none
-  Route:    ai-litellm route list|info [model]|probe <model...>|check [model...]
-  Context:  ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
-  Reason:   ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
-  Audit:    ai-litellm audit model-policy
-  Key:      ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]
-  Sync:     ai-litellm sync          Regenerate derived configs + reload proxy from the single source
-  Delete:   ai-litellm uninstall     Remove package directory and global shims
-  Caps:     ai-litellm capabilities  Proxy + runtime capability summary
-  Dash:     ai-litellm dash          Launch the fabric control-plane TUI (or run: fabric)
+  Proxy:         ai-litellm proxy status|start|stop|restart|logs [lines]|doctor [opts]
+  Harness:       ai-litellm harness list|info <name>|launch <name> [model] [args...]
+                 ai-litellm harness reasoning [name]
+                 ai-litellm harness reasoning set <name> <effort>
+                 ai-litellm harness reasoning unset <name>
+  Runtime:       ai-litellm runtime list|status [name]|doctor <name>
+  Model:         ai-litellm model list|info [model]|limits [model]|refresh-capabilities [opts]|probe <model...>|capabilities
+                 ai-litellm model reasoning probe <model> [effort]
+                 ai-litellm model reasoning set <model> <effort>
+                 ai-litellm model reasoning unset <model>
+  Route:         ai-litellm route list|info [model]|probe <model...>|check [model...]
+  Context:       ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
+  Reasoning:     ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
+  Audit:         ai-litellm audit model-policy
+  Key:           ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]
+  Sync:          ai-litellm sync          Regenerate derived configs + reload proxy from the single source
+  Uninstall:     ai-litellm uninstall     Remove package directory and global shims
+  Capabilities:  ai-litellm capabilities  Proxy + runtime capability summary
+  Dash:          ai-litellm dash          Launch the fabric control-plane TUI (or run: fabric)
+
+Reasoning effort values (not a command — pass to reasoning/harness set):
+  OpenRouter none|minimal|low|medium|high|xhigh   Claude auto|low|medium|high|xhigh|max
+  Codex low|medium|high|xhigh   OpenCode auto|none|minimal|low|medium|high|max   Goose auto|none
 
 Flat forms (start, stop, status, route-info, harnesses, launch, ...) still work but
 are deprecated in favor of the groups above.

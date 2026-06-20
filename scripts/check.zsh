@@ -211,6 +211,16 @@ for cmd in "route list" "runtime status" "reasoning matrix" "context matrix"; do
   json_check "$cmd --json" "$HOME/.local/bin/ai-litellm" ${=cmd} --json
 done
 echo "ok: route/runtime/reasoning/context --json"
+# ── H4: usage labels are real verbs; Effort is a reference, not a command ──
+usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
+[[ "$usage_out" == *"Uninstall:"* ]]      || { echo "FAIL: usage missing 'Uninstall:' label" >&2; exit 1; }
+[[ "$usage_out" == *"Capabilities:"* ]]   || { echo "FAIL: usage missing 'Capabilities:' label" >&2; exit 1; }
+[[ "$usage_out" != *"  Delete:"* ]]       || { echo "FAIL: usage still has stale 'Delete:' label" >&2; exit 1; }
+[[ "$usage_out" != *"  Caps:"* ]]         || { echo "FAIL: usage still has stale 'Caps:' label" >&2; exit 1; }
+# Effort enum must NOT be presented as a left-hand command token
+[[ "$usage_out" != *"  Effort:"* ]]       || { echo "FAIL: Effort still formatted as a command row" >&2; exit 1; }
+[[ "$usage_out" == *"effort values"* ]]   || { echo "FAIL: Effort reference heading missing" >&2; exit 1; }
+echo "ok: usage labels (H4)"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.
