@@ -221,6 +221,32 @@ usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
 [[ "$usage_out" != *"  Effort:"* ]]       || { echo "FAIL: Effort still formatted as a command row" >&2; exit 1; }
 [[ "$usage_out" == *"effort values"* ]]   || { echo "FAIL: Effort reference heading missing" >&2; exit 1; }
 echo "ok: usage labels (H4)"
+
+# H6: route probing consolidated to a single spelling: route probe.
+# IMPORTANT: this whole battery runs inside a zsh -fc SINGLE-QUOTED string, so
+# the source here must contain NO apostrophes. The deprecation warning contains
+# literal quotes (ai-litellm: QUOTEmodel probeQUOTE is deprecated; use ...), so
+# every apostrophe position is matched with a glob * instead of a literal quote.
+# Deprecated spellings still run but WARN+delegate toward route probe (never
+# silently break). The warn prints to stderr before the network probe runs, so
+# 2>&1 + substring captures it even though the probe then fails (proxy down in
+# the throwaway HOME) -- hence the trailing || true; we assert only on the warn.
+[[ "$("$HOME/.local/bin/ai-litellm" model probe X 2>&1 || true)" == *"model probe"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: model probe not deprecated to route probe" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" route check X 2>&1 || true)" == *"route check"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: route check not deprecated to route probe" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" probe-route X 2>&1 || true)" == *"probe-route"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: probe-route not deprecated to route probe" >&2; exit 1; }
+# Canonical route probe with NO args defaults to all models (absorbed check):
+# it must NOT print the empty-args usage error that the bare probe fn emits.
+[[ "$("$HOME/.local/bin/ai-litellm" route probe 2>&1 || true)" != *"Usage: ai-litellm probe-route <model_name>"* ]] || { echo "FAIL: route probe with no arg did not default to all models" >&2; exit 1; }
+# Route usage no longer advertises check; consolidated to probe [model...].
+route_usage="$("$HOME/.local/bin/ai-litellm" route bogus 2>&1 || true)"
+[[ "$route_usage" == *"route list|info [model]|probe [model...]"* ]] || { echo "FAIL: route usage not consolidated to probe [model...]" >&2; exit 1; }
+[[ "$route_usage" != *"check ["* ]] || { echo "FAIL: route usage still advertises a check verb" >&2; exit 1; }
+# Model usage no longer advertises a probe <model...> spelling (still works via alias).
+[[ "$("$HOME/.local/bin/ai-litellm" model bogus 2>&1 || true)" != *"|probe <model"* ]] || { echo "FAIL: model usage still advertises probe <model...>" >&2; exit 1; }
+# Top-level --help no longer advertises route check.
+help_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
+[[ "$help_out" != *"check [model...]"* ]] || { echo "FAIL: --help still advertises route check" >&2; exit 1; }
+echo "ok: route probe consolidation (H6)"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.

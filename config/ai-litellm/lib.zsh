@@ -5973,9 +5973,9 @@ ai_litellm_cmd_model() {
         *)     ai_litellm_deprecated "model reasoning" "reasoning matrix"; ai_litellm_model_reasoning_table "$@" ;;
       esac
       ;;
-    probe)        ai_litellm_probe_routes "$@" ;;
+    probe)        ai_litellm_deprecated "model probe" "route probe"; ai_litellm_probe_routes "$@" ;;
     capabilities) ai_litellm_capabilities ;;
-    *) echo "Usage: ai-litellm model list|info [model]|limits [model]|refresh-capabilities [--apply|--json|--check]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|probe <model...>|capabilities" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm model list|info [model]|limits [model]|refresh-capabilities [--apply|--json|--check]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|capabilities" >&2; return 1 ;;
   esac
 }
 
@@ -5986,15 +5986,22 @@ ai_litellm_cmd_route() {
       if [[ "${1:-}" == "--json" ]]; then ai_litellm_route_list_json; else ai_litellm_route_info; fi
       ;;
     info)    ai_litellm_route_info "$@" ;;
-    probe)   ai_litellm_probe_routes "$@" ;;
-    check)
+    probe)
       if (( $# == 0 )); then
         ai_litellm_probe_routes "${(@f)$(ai_litellm_model_names)}"
       else
         ai_litellm_probe_routes "$@"
       fi
       ;;
-    *) echo "Usage: ai-litellm route list|info [model]|probe <model...>|check [model...]" >&2; return 1 ;;
+    check)
+      ai_litellm_deprecated "route check" "route probe"
+      if (( $# == 0 )); then
+        ai_litellm_probe_routes "${(@f)$(ai_litellm_model_names)}"
+      else
+        ai_litellm_probe_routes "$@"
+      fi
+      ;;
+    *) echo "Usage: ai-litellm route list|info [model]|probe [model...]" >&2; return 1 ;;
   esac
 }
 
@@ -6098,11 +6105,11 @@ Usage: ai-litellm <group> <verb> [args]
                  ai-litellm harness reasoning set <name> <effort>
                  ai-litellm harness reasoning unset <name>
   Runtime:       ai-litellm runtime list|status [name]|doctor <name>
-  Model:         ai-litellm model list|info [model]|limits [model]|refresh-capabilities [opts]|probe <model...>|capabilities
+  Model:         ai-litellm model list|info [model]|limits [model]|refresh-capabilities [opts]|capabilities
                  ai-litellm model reasoning probe <model> [effort]
                  ai-litellm model reasoning set <model> <effort>
                  ai-litellm model reasoning unset <model>
-  Route:         ai-litellm route list|info [model]|probe <model...>|check [model...]
+  Route:         ai-litellm route list|info [model]|probe [model...]
   Context:       ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
   Reasoning:     ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
   Audit:         ai-litellm audit model-policy
@@ -6163,7 +6170,7 @@ ai_litellm() {
     doctor|--doctor)             ai_litellm_deprecated doctor "proxy doctor"; ai_litellm_doctor "$@" ;;
     list|--list)                 ai_litellm_deprecated list "model list"; ai_litellm_list ;;
     route-info|--route-info)     ai_litellm_deprecated route-info "route info"; ai_litellm_route_info "$@" ;;
-    probe-route|--probe-route)   ai_litellm_deprecated probe-route "model probe"; ai_litellm_probe_routes "$@" ;;
+    probe-route|--probe-route)   ai_litellm_deprecated probe-route "route probe"; ai_litellm_probe_routes "$@" ;;
     runtime-status|--runtime-status) ai_litellm_deprecated runtime-status "runtime status"; ai_litellm_runtime_status "$@" ;;
     harnesses|--harnesses)       ai_litellm_deprecated harnesses "harness list"; ai_litellm_harnesses ;;
     harness-info|--harness-info) ai_litellm_deprecated harness-info "harness info"; ai_litellm_harness_info "$@" ;;
