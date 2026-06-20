@@ -1,5 +1,6 @@
 """fabric — read-only control-plane TUI over ai-litellm."""
 from __future__ import annotations
+import asyncio
 from pathlib import Path
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -154,13 +155,13 @@ class FabricApp(App):
         yield RichLog(id="results", highlight=False, markup=True)
         yield StatusFooter(id="footer")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.register_theme(_FABRIC_THEME)
         self.theme = "fabric"
         self.query_one("#concepts", Tree).border_title = "Concepts"
         self.query_one("#results", RichLog).border_title = "Results"
         self.query_one("#footer", StatusFooter).set_items(self._actions_for(self._selected))
-        self.refresh_status()
+        await self.refresh_status()
         self.show_panel("proxy")
         self.set_interval(4.0, self.refresh_status)  # safe/read-only auto-refresh only
 
@@ -171,16 +172,20 @@ class FabricApp(App):
             self.query_one("#footer", StatusFooter).set_items(self._actions_for(node_id))
             self.show_panel(node_id)
 
-    def action_refresh(self) -> None:
-        self.refresh_status()
+    async def action_refresh(self) -> None:
+        await self.refresh_status()
         self.show_panel(self._selected)
 
     def action_help(self) -> None:
         from .help import HelpOverlay
         self.push_screen(HelpOverlay())
 
-    def refresh_status(self) -> None:
-        s = self.client.proxy_status()
+    async def refresh_status(self) -> None:
+        # Offload the blocking subprocess call to a thread pool so the event
+        # loop is free during the ~15s timeout window (pre-merge P1 fix).
+        s = await asyncio.to_thread(self.client.proxy_status)
+        # Widget mutation must happen on the main thread — we are back on the
+        # event loop here (asyncio.to_thread returns to the calling coroutine).
         health = s.get("health", "unknown")
         cur = s.get("configCurrency", "unknown")
         url = s.get("baseUrl", "")
@@ -310,7 +315,7 @@ class FabricApp(App):
             )
         if select and self._selected_harness is None:
             self._selected_harness = self._row_label(rows[0]) or None
-            self.refresh_status()
+            self.call_later(self.refresh_status)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         # Only the Harnesses panel drives the launch target.
@@ -322,7 +327,7 @@ class FabricApp(App):
         ):
             # Row keys are "<label>#<i>"; strip the disambiguating index suffix.
             self._selected_harness = str(event.row_key.value).rsplit("#", 1)[0] or None
-            self.refresh_status()
+            self.call_later(self.refresh_status)
 
     # --- action helpers ---
 
@@ -334,7 +339,15 @@ class FabricApp(App):
 
     @work
     async def _run_action(self, key: str) -> None:
-        """Run an action; @work provides the worker context needed by push_screen_wait."""
+        """Run an action; @work provides the worker context needed by push_screen_wait.
+
+        The confirm gate (push_screen_wait) stays on the event loop — it must
+        be awaited in an async worker context.  Only the blocking subprocess
+        call is offloaded to a thread pool via asyncio.to_thread so the UI
+        remains responsive during long-running actions (pre-merge P1 fix).
+        Widget mutations (log.write, refresh_status) happen after the await,
+        back on the main thread.
+        """
         a = self._action_by_key(key)
         if a is None:
             return
@@ -347,9 +360,17 @@ class FabricApp(App):
                 return
         log = self.query_one("#results", RichLog)
         log.write(f"$ ai-litellm {' '.join(a.argv)}")
-        rc = self.runner.run(list(a.argv), on_line=lambda ln: log.write(ln))
+        # Offload the blocking subprocess.run (up to 600s timeout) to a thread
+        # so the event loop is free during the action.  The confirm gate above
+        # stays on-loop — push_screen_wait requires an async worker context.
+        lines: list[str] = []
+        rc = await asyncio.to_thread(self.runner.run, list(a.argv), lines.append)
+        # Widget mutations must happen on the main thread (we are back on the
+        # event loop here — asyncio.to_thread awaits the thread and returns).
+        for ln in lines:
+            log.write(ln)
         log.write(f"[{'green' if rc == 0 else 'red'}]exit {rc}[/]")
-        self.refresh_status()
+        await self.refresh_status()
 
     # Per-key action methods (explicit, not metaprogrammed); @work makes _run_action sync-callable
     def action_do_s(self) -> None: self._run_action("s")
