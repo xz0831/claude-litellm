@@ -135,6 +135,7 @@ class FabricApp(App):
         self.runner = runner or ActionRunner()
         self._selected = "proxy"
         self._selected_harness: str | None = None
+        self._refresh_in_flight = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -181,6 +182,18 @@ class FabricApp(App):
         self.push_screen(HelpOverlay())
 
     async def refresh_status(self) -> None:
+        # Re-entrancy guard: if a refresh is already in flight (e.g. the proxy
+        # is unreachable and the 15s timeout is running), skip this tick rather
+        # than starting back-to-back blocking reads that pin a worker thread.
+        if self._refresh_in_flight:
+            return
+        self._refresh_in_flight = True
+        try:
+            await self._refresh_status_body()
+        finally:
+            self._refresh_in_flight = False
+
+    async def _refresh_status_body(self) -> None:
         # Offload the blocking subprocess call to a thread pool so the event
         # loop is free during the ~15s timeout window (pre-merge P1 fix).
         s = await asyncio.to_thread(self.client.proxy_status)

@@ -1,4 +1,6 @@
 import json
+import asyncio
+import threading
 import pytest
 from fabric_dash.app import FabricApp
 from fabric_dash.client import FabricClient
@@ -404,4 +406,81 @@ async def test_action_bar_is_contextual_per_panel():
         bar_proxy = footer.content.plain
         assert "launch" not in bar_proxy, (
             f"'launch' must not appear on proxy panel; got: {bar_proxy!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_refresh_status_reentrancy_guard():
+    """Re-entrancy guard: two concurrent refresh_status calls must only issue ONE
+    proxy_status read, not two.
+
+    TDD evidence:
+    - WITHOUT guard: both coroutines race through the flag check before either
+      sets _refresh_in_flight; call_counter reaches 2.
+    - WITH guard: the first coroutine sets the flag; the second sees it True and
+      returns early; call_counter stays at 1.
+
+    The gate pattern: proxy_status blocks until released so both coroutines are
+    guaranteed to overlap — we gather them, release the gate, let both settle,
+    then check the counter.
+    """
+    # Threading primitives for controlling the slow proxy read.
+    gate = threading.Event()       # blocks proxy_status until we release it
+    call_counter = 0               # how many times proxy_status was actually called
+
+    def slow_proxy_status():
+        nonlocal call_counter
+        call_counter += 1
+        # Block until the test releases the gate (simulates a slow/timeout proxy).
+        gate.wait(timeout=5.0)
+        return {"health": "ok", "configCurrency": "current", "baseUrl": "http://127.0.0.1:4000"}
+
+    # Minimal FabricClient whose proxy_status blocks on `gate`.
+    base_data = {
+        "ai-litellm proxy status --json": json.dumps({"health": "ok", "configCurrency": "current", "baseUrl": "http://127.0.0.1:4000"}),
+        "ai-litellm model list --json": json.dumps([]),
+        "ai-litellm model limits --json": json.dumps([]),
+        "ai-litellm harness list --json": json.dumps([]),
+        "ai-litellm key status --json": json.dumps({}),
+        "ai-litellm runtime status --json": json.dumps([]),
+        "ai-litellm reasoning matrix --json": json.dumps([]),
+    }
+
+    def run(argv):
+        return (0, base_data.get(" ".join(a for a in argv if a is not None), ""))
+
+    client = FabricClient(runner=run)
+
+    app = FabricApp(client=client)
+    # Monkey-patch proxy_status AFTER FabricApp is created (so on_mount's initial
+    # refresh_status uses the instant runner-backed version, boots cleanly, and
+    # the gate is fresh for our controlled overlap test below).
+    # We patch AFTER the context manager enters (post-mount).
+    async with app.run_test(headless=True) as pilot:
+        # App is fully booted; on_mount's initial refresh_status completed (using
+        # the instant runner-backed proxy_status via base_data above).
+        await pilot.pause()
+
+        # Now swap in the slow blocking version for the controlled overlap test.
+        client.proxy_status = slow_proxy_status
+
+        # Release the gate immediately — the point is not to time the overlap but
+        # to let asyncio.gather drive both coroutines and count how many thread
+        # dispatches happen.
+        gate.set()
+
+        # Fire TWO refresh_status calls concurrently on the event loop.
+        # asyncio.gather schedules both coroutines before either executes; the
+        # guard must ensure only one issues a proxy_status call.
+        await asyncio.gather(
+            app.refresh_status(),
+            app.refresh_status(),
+        )
+
+        # Both coroutines have now returned (gather waits for all).
+        # With the guard: only 1 proxy_status call was made (second returned early).
+        # Without the guard: both proceed to asyncio.to_thread, giving 2.
+        assert call_counter == 1, (
+            f"Guard failed: expected exactly 1 proxy_status call for 2 concurrent "
+            f"refresh_status invocations, got {call_counter}"
         )
