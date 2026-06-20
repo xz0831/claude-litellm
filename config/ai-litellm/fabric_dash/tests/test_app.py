@@ -484,3 +484,149 @@ async def test_refresh_status_reentrancy_guard():
             f"Guard failed: expected exactly 1 proxy_status call for 2 concurrent "
             f"refresh_status invocations, got {call_counter}"
         )
+
+
+@pytest.mark.asyncio
+async def test_run_argv_safe_runs_without_modal_and_logs():
+    calls = []
+    def spawn(argv):
+        calls.append(argv)
+        return (0, ["did the thing"])
+    from fabric_dash.actions import ActionRunner
+    app = FabricApp(client=make_client(), runner=ActionRunner(spawn=spawn))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app._run_argv(["proxy", "start"], label="start proxy")  # SAFE → no modal
+        await pilot.pause()
+        assert calls == [["ai-litellm", "proxy", "start"]]
+        # not asserting modal absence beyond: the call completed inline (no hang)
+
+
+@pytest.mark.asyncio
+async def test_run_argv_restart_goes_through_confirm_modal():
+    calls = []
+    def spawn(argv):
+        calls.append(argv)
+        return (0, [])
+    from fabric_dash.actions import ActionRunner
+    app = FabricApp(client=make_client(), runner=ActionRunner(spawn=spawn))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._run_argv_worker(["proxy", "restart"], "restart proxy")  # schedule via a worker wrapper
+        await pilot.pause()
+        from fabric_dash.modal import ConfirmModal
+        assert isinstance(app.screen, ConfirmModal)   # RESTART → gated, not yet run
+        assert calls == []
+        await pilot.press("tab"); await pilot.press("enter"); await pilot.pause()
+        assert calls == [["ai-litellm", "proxy", "restart"]]
+
+
+@pytest.mark.asyncio
+async def test_palette_filter_and_select_noarg_returns_argv():
+    from fabric_dash.palette import CommandPalette
+    from fabric_dash.commands import COMMANDS
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["choice"] = await app.push_screen_wait(CommandPalette(COMMANDS))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("r", "e", "s", "t")          # filter -> "restart proxy"
+        await pilot.pause()
+        await pilot.press("enter")                     # no-arg -> selects + dismisses
+        await pilot.pause()
+        label, argv = captured["choice"]
+        assert argv == ["proxy", "restart"]
+
+@pytest.mark.asyncio
+async def test_palette_args_mode_shows_usage_and_splits():
+    from fabric_dash.palette import CommandPalette
+    from fabric_dash.commands import COMMANDS
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["choice"] = await app.push_screen_wait(CommandPalette(COMMANDS))
+        app.run_worker(grab())
+        await pilot.pause()
+        # filter to a takes_args command (model reasoning set)
+        for ch in "modelreasoningset":
+            await pilot.press(ch)
+        await pilot.pause()
+        await pilot.press("enter")                     # enters ARG mode (does not dismiss yet)
+        await pilot.pause()
+        from textual.widgets import Input
+        inp = app.screen.query_one(Input)
+        assert "model reasoning set" in inp.placeholder  # usage hint shown
+        for ch in "GLM-5.2 high":
+            await pilot.press(ch if ch != " " else "space")
+        await pilot.press("enter")                     # submit args -> dismiss
+        await pilot.pause()
+        label, argv = captured["choice"]
+        assert argv == ["model", "reasoning", "set", "GLM-5.2", "high"]
+
+@pytest.mark.asyncio
+async def test_palette_escape_cancels():
+    from fabric_dash.palette import CommandPalette
+    from fabric_dash.commands import COMMANDS
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["choice"] = await app.push_screen_wait(CommandPalette(COMMANDS))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert captured["choice"] is None
+
+
+@pytest.mark.asyncio
+async def test_colon_opens_palette():
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("colon")
+        await pilot.pause()
+        from fabric_dash.palette import CommandPalette
+        assert isinstance(app.screen, CommandPalette)
+
+
+@pytest.mark.asyncio
+async def test_palette_runs_safe_command_without_modal():
+    calls = []
+    def spawn(argv):
+        calls.append(argv); return (0, ["ok"])
+    from fabric_dash.actions import ActionRunner
+    app = FabricApp(client=make_client(), runner=ActionRunner(spawn=spawn))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("colon"); await pilot.pause()
+        for ch in "start":                  # filter -> "start proxy" (SAFE)
+            await pilot.press(ch)
+        await pilot.press("enter"); await pilot.pause()  # select+run, no modal
+        assert calls == [["ai-litellm", "proxy", "start"]]
+
+
+@pytest.mark.asyncio
+async def test_palette_restart_command_goes_through_confirm_modal():
+    calls = []
+    def spawn(argv):
+        calls.append(argv); return (0, [])
+    from fabric_dash.actions import ActionRunner
+    app = FabricApp(client=make_client(), runner=ActionRunner(spawn=spawn))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("colon"); await pilot.pause()
+        for ch in "restart":
+            await pilot.press(ch)
+        await pilot.press("enter"); await pilot.pause()  # palette closes, gate opens
+        from fabric_dash.modal import ConfirmModal
+        assert isinstance(app.screen, ConfirmModal)
+        assert calls == []                               # not run until confirmed
+        await pilot.press("tab"); await pilot.press("enter"); await pilot.pause()
+        assert calls == [["ai-litellm", "proxy", "restart"]]
