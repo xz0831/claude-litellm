@@ -191,11 +191,17 @@ def policy_descriptor_json(policy: dict[str, Any]) -> str:
 
 def build_policy(default=32000, headroom=8192, min_input=32768,
                  per_selection=None, per_tier=None, per_model=None,
-                 selection=None, model=None, empty=False) -> dict[str, Any]:
+                 selection=None, model=None, empty=False,
+                 no_default=False) -> dict[str, Any]:
+    """no_default omits the ``default`` reservation key (and any perX) while
+    keeping tokenizerHeadroom/minimumInput, so the policy is non-empty but NO
+    reservation source resolves -- forcing the capability-clamped-default
+    fallback (reservation = min(capability, 32000)) when a capability exists,
+    or the no-reservation sentinel when it doesn't."""
     if empty:
         return {}
     p: dict[str, Any] = {}
-    if default is not None:
+    if default is not None and not no_default:
         p["default"] = default
     if headroom is not None:
         p["tokenizerHeadroom"] = headroom
@@ -386,8 +392,30 @@ ROWS: list[dict[str, Any]] = [
     dict(id="L2", regime="Large Kimi/gpt-5.4-mini", ctx=262142, cap=262142, families="A,B,D"),
     dict(id="L3", regime="Large GLM-5.2/gpt-5.5", ctx=1048576, cap=131072, families="A,B,D"),
     dict(id="L4", regime="Large cap<32000", ctx=1048576, cap=20000, families="A,B"),
-    dict(id="B1", regime="MR==R exactly", ctx=72960, cap=72960, families="A,B"),
-    dict(id="B2", regime="MR==R-1 (small by 1)", ctx=72959, cap=72959, families="A,B"),
+    # B1/B2 do NOT hit the reservation==max_reservation edge: at ctx~72960 the
+    # headroom scales to floor(ctx*0.1) so max_reservation=32896 vs reservation=
+    # 32000 (896 apart). Relabeled to what they actually exercise (headroom
+    # scaling under the 8192 cap). The exact MR==R edge is covered by BX-* below.
+    dict(id="B1", regime="headroom scaled (R<MR by 896)", ctx=72960, cap=72960, families="A,B"),
+    dict(id="B2", regime="headroom scaled, ctx-1", ctx=72959, cap=72959, families="A,B"),
+    # --- Gap 2a: reservation == max_reservation EXACTLY (and +-1). ---
+    # ctx=100000 keeps headroom=8192, min_input=32768 fixed, so MR=100000-40960=
+    # 59040. The reservation source is the `default` key set equal to (and +-1 of)
+    # MR, with a huge cap so the capabilityClamp never fires first. This is the
+    # only place the `reservation > max_reservation` comparator sees equality.
+    dict(id="BX-eq", regime="reservation==MR exactly", ctx=100000, cap=200000,
+         default=59040, families="A"),       # MR=59040, R=59040 (not >), ei=32768
+    dict(id="BX-m1", regime="reservation==MR-1", ctx=100000, cap=200000,
+         default=59039, families="A"),       # R<MR, no clamp, ei=32769
+    dict(id="BX-p1", regime="reservation==MR+1", ctx=100000, cap=200000,
+         default=59041, families="A"),       # R>MR by 1 -> clamped to 59040, ei=32768
+    # --- Gap 2b: EMPTY reservation policy (no default/perX) + capability present
+    # forces reservation = min(capability, 32000). headroom/min_input still set so
+    # the policy is non-empty (Ruby catalog/matrix don't take the empty short-cut).
+    dict(id="CD-i", regime="cap-clamped-default, cap<32000", ctx=1048576, cap=20000,
+         no_default=True, families="A"),      # reservation=cap=20000, ei=1020384
+    dict(id="CD-ii", regime="cap-clamped-default, cap>=32000", ctx=1048576, cap=131072,
+         no_default=True, families="A"),      # reservation=min(cap,32000)=32000, ei=1008384
     dict(id="B3a", regime="Kimi-1", ctx=262143, cap=262143, families="A,B"),
     dict(id="B3b", regime="Kimi+1", ctx=262144, cap=262144, families="A,B"),
     dict(id="S1", regime="Small, headroom scaled", ctx=80000, cap=80000, families="A,B"),
@@ -406,6 +434,13 @@ ROWS: list[dict[str, Any]] = [
     dict(id="Z1", regime="context=null", ctx=None, cap=4096, families="nullctx"),
     dict(id="N1", regime="NaN/negative floor to null", ctx=-5, cap=-1, families="nullctx"),
     dict(id="Z2", regime="no cap AND empty policy", ctx=50000, cap=None, families="Cempty", empty=True),
+    # no capability AND no reservation source, but policy non-empty (headroom/
+    # min_input present). Hits the no-reservation sentinel on Node (exit 1) and
+    # Ruby-matrix (nil). Ruby-catalog does NOT short-circuit (policy non-empty)
+    # so it resolves reservation = [nil,32000].compact.min = 32000 and computes a
+    # real budget -- a genuine, documented impl divergence, asserted per-impl.
+    dict(id="Z3", regime="no cap, reservation-empty policy", ctx=50000, cap=None,
+         no_default=True, families="Cnodef"),
 ]
 
 
@@ -444,16 +479,21 @@ def run() -> int:
         per_model = row.get("per_model")
         families = set(row["families"].split(","))
         empty = row.get("empty", False)
+        no_default = row.get("no_default", False)
+        # Per-row `default` reservation override (BX-* drive the MR==R edge). When
+        # no_default is set the row deliberately has NO default reservation source.
+        row_default = None if no_default else row.get("default", 32000)
 
         policy = build_policy(
+            default=32000 if row_default is None else row_default,
             per_selection=per_selection, per_tier=per_tier, per_model=per_model,
-            selection=selection, model=model, empty=empty,
+            selection=selection, model=model, empty=empty, no_default=no_default,
         )
 
         # ---- ORACLE -------------------------------------------------------
         oracle = canonical_budget(
             ctx, cap,
-            default=None if empty else 32000,
+            default=None if empty else row_default,
             tokenizer_headroom=None if empty else 8192,
             minimum_input=None if empty else 32768,
             per_selection=per_selection, per_tier=per_tier, per_model=per_model,
@@ -631,6 +671,35 @@ def run() -> int:
             if rcat.get("effective_input") != ctx:
                 failures.append(Failure(rid, "RubyCatalog empty-policy should pass context through",
                                         {"ruby_catalog": rcat.get("effective_input"), "context": ctx}))
+
+        # ===================================================================
+        # FAMILY C_nodef: NO capability AND NO reservation source, but the policy
+        # is NON-empty (headroom/min_input present). Impl-specific, NOT cross-impl:
+        #   Node:        no reservation -> exit(1)  [SENTINEL_NO_RESERVATION]
+        #   Ruby-matrix: no reservation -> nil      [SENTINEL_NO_RESERVATION]
+        #   Ruby-catalog: policy non-empty so it does NOT short-circuit; resolves
+        #                 reservation = [nil,32000].compact.min = 32000, then
+        #                 computes a real budget. We pin that budget to the oracle
+        #                 (default=32000 mirrors the .compact.min fallback).
+        # ===================================================================
+        if "Cnodef" in families:
+            rows_checked += 1
+            node = drive_node(policy, selection, model, ctx, cap)
+            rmat = drive_ruby_matrix(policy, selection, model, ctx, cap)
+            rcat = drive_ruby_catalog(policy, selection, model, ctx, cap)
+            if node.get("sentinel") != "exit-nonzero":
+                failures.append(Failure(rid, "Node no-cap+no-reservation should exit nonzero (sentinel)",
+                                        {"node": node}))
+            if rmat.get("sentinel") != "nil":
+                failures.append(Failure(rid, "RubyMatrix no-cap+no-reservation should return nil (sentinel)",
+                                        {"ruby_matrix": rmat}))
+            # Ruby-catalog resolves the 32000 fallback and computes a budget.
+            cat_oracle = canonical_budget(
+                ctx, cap, default=32000, tokenizer_headroom=8192, minimum_input=32768,
+            ).get("effectiveInput")
+            if rcat.get("effective_input") != cat_oracle:
+                failures.append(Failure(rid, "RubyCatalog no-cap+no-reservation budget != oracle (32000 fallback)",
+                                        {"ruby_catalog": rcat.get("effective_input"), "oracle": cat_oracle}))
 
         # ===================================================================
         # FAMILY D: Python clamp_token_reservations lower-only semantics.
