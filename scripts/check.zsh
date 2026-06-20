@@ -24,6 +24,15 @@ done
 python3 -m py_compile "$repo_root/scripts/verify_litellm_token_clamp.py"
 python3 -m py_compile "$repo_root/scripts/verify_tool_call_fidelity.py"
 python3 -m py_compile "$repo_root/config/ai_litellm_callbacks/output_clamp.py"
+python3 -m py_compile "$repo_root/scripts/verify_budget_consistency.py"
+
+# Differential test: the four token-budget implementations (Node + 2 Ruby copies
+# in lib.zsh, Python in output_clamp.py) must agree on every comparable quantity
+# across the full input matrix. This is the real drift guard for the budget math;
+# the legacy 1008384/221950/3277 single-point pins below remain as cheap smoke.
+# Runs from the checkout so it slices the *live* lib.zsh (self-syncing, no copy).
+# Non-interactive (no stdin/env prompts); exits nonzero on any cross-impl drift.
+python3 "$repo_root/scripts/verify_budget_consistency.py"
 
 for file in \
   "$repo_root/config/ai-litellm/settings.json" \
