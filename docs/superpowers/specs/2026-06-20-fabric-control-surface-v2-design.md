@@ -1,0 +1,122 @@
+# Design Spec — `fabric` v2: 진짜 control surface
+
+Date: 2026-06-20
+Status: Draft (브레인스토밍 합의안, 구현 계획 전)
+Author: xz0831 + Claude (brainstorming session)
+Supersedes/extends: docs/superpowers/specs/2026-06-18-fabric-dashboard-tui-design.md (v1)
+
+---
+
+## 0. v1 회고 (왜 v2가 필요한가)
+
+v1 `fabric`는 **읽기 위주 대시보드 + 라이프사이클 액션 몇 개**(proxy start/stop/restart/sync, harness launch, doctor)로 출시됐다. 실사용 피드백에서 드러난 결함:
+
+- **발견성 실패** — 액션이 하단 footer에 키로만 숨어, "여기서 뭘 할 수 있는지" 안 보인다.
+- **변경 불가** — 모델 tier 매핑·reasoning effort·키 같은 **실제 값을 바꾸는 기능이 없다**(v1이 의도적으로 비목표로 미룸). 원래 의도("명령이 너무 많으니 총괄하는 UI")에 못 미침.
+- **거친 디자인** — 패널 구분선·테두리 없음, Models 패널 "Sources" 컬럼이 raw 파이썬 dict를 덤프, 기본 monokai 테마.
+
+매체(TUI)는 한계가 아니다(k9s·lazygit는 풍부한 변경 제어를 한다). v2는 **범위 + 발견성 + 완성도**를 고쳐 fabric을 "보는 대시보드"에서 "명령을 발견·실행·변경하는 control surface"로 끌어올린다.
+
+## 1. 목적 (Goals)
+
+1. **발견성** — 사용자가 화면을 보는 것만으로 "지금 무엇을 할 수 있는지" 안다(숨은 키 금지). + 전체 명령을 검색해 실행하는 **커맨드 팔레트**로 "외울 필요"를 제거.
+2. **변경(mutating) 제어** — reasoning effort, 키, 그리고 **모델 tier/facade 매핑**까지 TUI에서 안전하게 바꾼다.
+3. **완성도** — 패널 구분선/테두리, 컬럼 포맷(특히 Sources raw-dict 제거), 의도된 테마/상태색.
+
+성공 기준: 신규 사용자가 10초 안에 "뭘 할 수 있는지" 파악하고, 자주 쓰는 mutating 명령(reasoning set·launch·sync·tier 매핑)을 CLI 없이 수행할 수 있다. 외부 UX 리뷰어가 다시 통과.
+
+## 2. 비목적 (Non-Goals)
+
+- **네이티브 Mac 앱 / 로컬 웹 UI로의 전환** — 매체는 TUI 유지(얇은 ethos, served surface 없음). 검토했고 기각.
+- **native harness 결합** — 어떤 기능도 native codex/claude의 상태에 의존하거나 그것을 변경해선 안 된다. (codex active-카탈로그 소싱 등은 영구 배제.)
+- **TUI가 config 파일을 직접 편집** — 변경 로직은 backend 명령이 소유; TUI는 호출자.
+
+## 3. 제약 (Constraints)
+
+- 매체 = Textual TUI (v1 패키지 `config/ai-litellm/fabric_dash/` 확장). Python은 패키지 소유 venv.
+- **backend가 로직 소유, TUI는 control surface** — 모든 변경은 기존 또는 신규 `ai-litellm` 명령을 호출해 수행(TUI가 YAML/JSON을 직접 쓰지 않음). 신규 backend 명령은 doctor로 검증된다.
+- 읽기는 `--json` 표면(v1). 액션은 `ai-litellm <command>` 호출(v1 ActionRunner).
+- native harness 불가침 (위 §2).
+- 모든 위험(restart-causing)·과금(billable) 작업은 결과를 명시하는 확인 모달을 거친다(v1 ConfirmModal 패턴; 중단성=Cancel-포커스, 과금=Confirm-포커스).
+
+## 4. 전체 형태 (인터랙션 모델)
+
+```
+┌ fabric ─────────  ● proxy ok   ◆ config STALE→s   omlx ●        :cmd  ? help ┐
+│ Concepts          ║  Models / Routes                          [선택: GLM-5.2]│
+│ ▸ Proxy           ║  ┌────────────┬─────────┬────────┬──────────┐           │
+│ ▸ Harnesses       ║  │ Model      │ Context │ Output │ Eff.Input │           │
+│ ▸ Models/Routes ◀ ║  │ GLM-5.2    │ 1048576 │ 131072 │  917504   │           │
+│ ▸ Runtimes        ║  │ DeepSeek   │ 1048576 │ 384000 │  664576   │           │
+│ ▸ Budget&Policy   ║  └────────────┴─────────┴────────┴──────────┘           │
+│ ▸ Keys            ║  Sources: provider/provider   (raw dict 덤프 제거)        │
+│ ▸ Mappings ★NEW   ║                                                          │
+├───────────────────╨──── 선택 항목 액션 (라벨로 보임) ────────────────────────┤
+│  [enter] info   [e] reasoning set   [p] probe ⚠과금   [l] launch   [/] 필터   │
+├──────────────────────────── 결과 로그 ──────────────────────────────────────┤
+│ $ ai-litellm reasoning set GLM-5.2 high … ok                                 │
+└─ : 커맨드 팔레트  ·  ? 도움말  ·  q 종료  ·  ⚠위험/과금 = 확인 모달 ──────────┘
+```
+
+세 축:
+- **커맨드 팔레트(`:` 또는 Ctrl-P)** — 전체 `ai-litellm` 명령 레지스트리를 fuzzy 검색 → 실행. 인자가 필요하면 generic 인자 폼(명령 usage를 힌트로). 위험/과금 명령은 확인 게이트.
+- **맥락 액션 바** — 현재 패널·선택 항목의 가능한 동작을 **라벨로 항상 표시**(예: Models에서 모델 선택 시 [reasoning set] [probe] [info] [limits]).
+- **Mappings 패널(신규)** — tier/facade ↔ 모델 매핑을 보고 편집.
+
+## 5. 컴포넌트
+
+1. **CommandPalette** (모달 overlay) — 명령 레지스트리(그룹·verb·인자·safety grade·mutating 여부 메타데이터를 가진 정적 큐레이션 목록, fabric_dash 내) 위에서 검색. Enter→인자 폼 또는 즉시 실행→ActionRunner. mutating/billable은 ConfirmModal 경유. 결과는 로그 패널로.
+2. **PanelActionBar** — 패널/선택별 액션을 라벨로 렌더(숨은 footer 키 → 가시화). 키 바인딩은 유지하되 화면에 보인다.
+3. **MappingsPanel + MappingEditor** — claude tier(fable/opus/sonnet/haiku, proxy+direct)와 codex facade의 현재 매핑 표시. 항목 선택 → 등록된 모델 목록에서 선택 → 확인(결과 명시) → 신규 backend 명령 호출 → 재-doctor 결과 표시.
+4. **HelpOverlay(`?`)** — 전체 키맵.
+5. **디자인 오버홀** — 패널 테두리/구분선(Textual border + 영역 분리), 컬럼 포맷터(Sources를 "provider/provider"처럼 정리, EffectiveInput 표현 정리), 의도된 테마/상태색 시스템(기본 monokai 탈피, 일관된 green/amber/red).
+
+## 6. 단계 분해 (각 단계 독립 출시, 위험 낮은 순)
+
+| Phase | 내용 | 해결 |
+|---|---|---|
+| **P1** 디자인+발견성 | 패널 테두리/구분선, 컬럼 포맷(Sources raw-dict 제거), 의도된 테마, 맥락 액션 바 가시화(기존 액션), `?` 도움말 | 투박·발견성 |
+| **P2** 커맨드 팔레트 | `:` 전체 명령 검색·실행(인자 폼·확인 게이트)·결과 로그 | "명령 외우기 힘듦" |
+| **P3** 튜닝 변경 | reasoning set/unset, key set 등 자주 쓰는 mutating을 맥락 액션·모달로(기존 CLI 명령 호출) | "실제 값 변경" |
+| **P4a** claude tier 매핑 | `harness tier set` (settings.json·JSON) + Mappings 패널의 claude 편집 | "총괄(claude)" |
+| **P4b** codex facade 매핑 | `model facade set` (litellm_config.yaml·앵커보존 YAML) + Mappings 패널의 codex 편집 | "총괄(codex)" |
+
+각 Phase는 별도 implementation plan(writing-plans) 사이클을 받는다. 첫 plan = P1.
+
+## 7. P4 안전장치 (모델 매핑 에디터)
+
+TUI는 config를 직접 안 쓴다. 신규 backend 명령이 검증·기록·sync·doctor를 소유한다.
+
+- **신규 backend 명령** (lib.zsh, doctor 검증):
+  - `ai-litellm harness tier set <harness> <tier> <model>` — claude tier alias(proxy `aliases.<tier>` + direct `directAliases.<tier>` + displayNames) 편집. settings.json은 평문 JSON이라 비교적 단순. 검증: `<model>`이 등록된 model_name인가(proxy) / 유효 OpenRouter slug인가(direct); 로컬 모델을 direct에 넣으면 loud-warn(구조적 도달 불가).
+  - `ai-litellm model facade set <facade> <backend>` — codex facade의 litellm_config model_list 라우트(`litellm_params.model` + `model_info: *anchor`) 편집. **앵커·주석 보존**이 어려움 → `refresh-capabilities --apply`가 쓰는 앵커보존 정규식 라인에디터 패턴 재사용. 검증: `<facade>`가 codex `--bundled` 카탈로그 슬러그인가; `<backend>`가 x-limits 앵커를 가지는가.
+- **변경 흐름**: 사전검증(실패=loud-error, 절대 깨진 config 미기록) → 원자적 쓰기(tmp+rename) + `.bak` 스냅샷(되돌리기) → 확인 모달이 *전체 결과 명시*(파일 기록 + 프록시 재시작 + 도는 doctor) → `sync` → **재-doctor(audit model-policy·context doctor·verify_budget_consistency)가 사후 가드** → 실패 시 TUI 표시 + `.bak` 되돌리기 제안.
+- 보호된 단일소스의 무결성은 **신규 명령의 사전검증 + 기존 doctor**가 지킨다. 변경 로직은 backend(테스트=check.zsh + 차등테스트)에 있고 TUI는 얇은 호출자.
+
+## 8. 데이터 흐름
+
+- **읽기**: FabricClient → `ai-litellm <…> --json` (v1, 변경 없음). 매핑 표시는 `harness list/info --json` + claude settings + litellm_config 읽기(읽기 전용; 신규 read helper나 기존 --json 확장).
+- **쓰기**: ActionRunner → `ai-litellm <mutating command>` (기존: reasoning set/unset, key set, sync, restart…; 신규: tier set, facade set). 변경 후 영향 패널 갱신 + 결과/doctor 로그 표시.
+
+## 9. 디자인/시각 (P1 핵심)
+
+- Textual `border`/구분선으로 header·tree·content·action bar·log·footer 영역 분리.
+- 컬럼 포맷터: dict/list 값을 사람이 읽는 형태로(예 Sources `{context,output}` → `provider/provider`); None/0 경계 표현 정리.
+- 의도된 테마: 기본 monokai 대신 일관 팔레트 + 상태색(green=ok/ready, amber=stale/disruptive, red=fail/missing/billable)을 v1처럼 load-bearing하게.
+- 맥락 액션 바는 항상 라벨 표시(키 + 동작명 + ⚠위험/과금 표식).
+
+## 10. 테스트
+
+- Pilot 테스트(venv): 팔레트(필터·실행·확인 게이트), 맥락 액션, MappingEditor(backend mock), 컬럼 포맷터(raw-dict 비노출 회귀), 디자인은 스냅샷 렌더 리뷰.
+- 신규 backend 명령: check.zsh 단언(검증 loud-error, 앵커보존 쓰기, sync/doctor 통과) + 매핑 변경 후 audit/context doctor green. 실제 과금/네트워크 호출 0(mock).
+
+## 11. 미해결 / 결정 필요 (구현 계획에서 확정)
+
+- 커맨드 레지스트리: 정적 큐레이션 목록 vs `ai-litellm` introspection 생성 — 정적+메타데이터로 시작(확인 게이팅 위해).
+- 팔레트 인자 폼의 깊이(자유 텍스트 vs 타입별 위젯).
+- 매핑 변경 후 `sync`를 자동으로 할지(프록시 재시작=중단) vs "config 변경됨 → sync 액션 제시"로 둘지 — 후자(확인 모달 경유)가 기본.
+- 테마: 직접 정의 vs Textual 내장 테마 커스터마이즈.
+
+---
+
+*이 spec은 2026-06-20 브레인스토밍 합의안이다. 4 phase(P1→P2→P3→P4a→P4b)는 각각 writing-plans 사이클을 받으며, 첫 plan은 P1(디자인+발견성)이다.*

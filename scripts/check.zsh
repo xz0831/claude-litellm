@@ -2,6 +2,12 @@
 
 set -euo pipefail
 
+# check.zsh never reads stdin. Pin it to /dev/null so any command that would
+# otherwise fall back to reading stdin (e.g. a jq whose `< file` redirect is
+# lost in a nested `zsh -fc` quoting context) gets immediate EOF instead of
+# blocking forever when check runs non-interactively (background/CI/no TTY).
+exec </dev/null
+
 repo_root="${0:A:h:h}"
 real_home="$HOME"
 
@@ -18,6 +24,15 @@ done
 python3 -m py_compile "$repo_root/scripts/verify_litellm_token_clamp.py"
 python3 -m py_compile "$repo_root/scripts/verify_tool_call_fidelity.py"
 python3 -m py_compile "$repo_root/config/ai_litellm_callbacks/output_clamp.py"
+python3 -m py_compile "$repo_root/scripts/verify_budget_consistency.py"
+
+# Differential test: the four token-budget implementations (Node + 2 Ruby copies
+# in lib.zsh, Python in output_clamp.py) must agree on every comparable quantity
+# across the full input matrix. This is the real drift guard for the budget math;
+# the legacy 1008384/221950/3277 single-point pins below remain as cheap smoke.
+# Runs from the checkout so it slices the *live* lib.zsh (self-syncing, no copy).
+# Non-interactive (no stdin/env prompts); exits nonzero on any cross-impl drift.
+python3 "$repo_root/scripts/verify_budget_consistency.py"
 
 for file in \
   "$repo_root/config/ai-litellm/settings.json" \
@@ -35,10 +50,17 @@ if rg --glob '!scripts/check.zsh' -n 'sk-or-v1-|sk-proj-|sk-ant-|OPENROUTER_API_
   exit 1
 fi
 
+# ── M23: deleted agent-scratchpad docs must not be referenced anywhere ──
+if rg --glob '!scripts/check.zsh' -n 'MODEL_HARNESS_CONTEXT_AUDIT_FOR_CODEX|CODEX_RECOMMENDATION_CAPABILITY_OBSERVABILITY' "$repo_root" >/dev/null 2>&1; then
+  echo "FAIL: dangling reference to a deleted scratchpad doc" >&2
+  exit 1
+fi
+echo "ok: scratchpad docs removed (M23)"
+
 tmp_home="$(mktemp -d)"
 spaced_home="$(mktemp -d)"
 trap 'rm -rf "$tmp_home" "$spaced_home"' EXIT
-LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-$$" HOME="$tmp_home" "$repo_root/scripts/install.zsh" >/dev/null
+AI_LITELLM_SKIP_DASH_VENV=1 LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-$$" HOME="$tmp_home" "$repo_root/scripts/install.zsh" >/dev/null
 REAL_HOME="$real_home" HOME="$tmp_home" zsh -fc '
 set -e
 prefix="$HOME/.local/share/ai-litellm-fabric"
@@ -49,6 +71,17 @@ test -f "$HOME/.local/share/ai-litellm-fabric/config/ai_litellm_callbacks/output
 test -x "$HOME/.local/share/ai-litellm-fabric/scripts/uninstall.zsh"
 test -x "$HOME/.local/share/ai-litellm-fabric/bin/claude-litellm"
 test -x "$HOME/.local/bin/claude-litellm"
+[[ -x "$HOME/.local/bin/fabric" ]] || { echo "FAIL: fabric shim missing"; exit 1; }
+# module import check using the dash venv installed by install.zsh
+tmp_venv="$HOME/.local/share/ai-litellm-fabric/state/dash-venv"
+tmp_prefix="$HOME/.local/share/ai-litellm-fabric"
+if [[ -x "$tmp_venv/bin/python" ]] && "$tmp_venv/bin/python" -c "import textual" 2>/dev/null; then
+  PYTHONPATH="$tmp_prefix/config/ai-litellm" "$tmp_venv/bin/python" -m fabric_dash --help >/dev/null 2>&1 \
+    || { echo "FAIL: fabric_dash --help failed under dash venv"; exit 1; }
+  echo "ok: fabric shim + module (venv)"
+else
+  echo "note: skipping fabric_dash module check (dash venv/textual unavailable in check env)" >&2
+fi
 "$HOME/.local/bin/ai-litellm" --help >/dev/null
 ! grep -R "__HOME__\\|__FABRIC_HOME__" "$prefix/config" "$prefix/docs" >/dev/null
 grep -q "AI_LITELLM_FABRIC_HOME=" "$HOME/.local/bin/ai-litellm"
@@ -70,9 +103,11 @@ if ai_litellm_assert_rendered_path "__FABRIC_HOME__/state/goose-litellm" "test" 
   exit 1
 fi
 ai_litellm_assert_rendered_path "$prefix/state/goose-litellm" "test"
-runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown gemma4-12b)"
+runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown local-omlx-gemma4-12b)"
 [[ "$runtime_routes_dry" == *"MarkItDown-omlx -> openai/MarkItDown"* ]]
-[[ "$runtime_routes_dry" != *"gemma4-12b"* ]]
+# Gemma4-12B-omlx registry entry serves openai/local-omlx-gemma4-12b, so the
+# discovered route for it must be deduped (absent from the dry output).
+[[ "$runtime_routes_dry" != *"local-omlx-gemma4-12b-omlx"* ]]
 # Robustness: a runtime that is reachable but whose /v1/models returns an
 # UNPARSEABLE body must NOT silently wipe existing discovered routes — discovery
 # failure (rc!=0) is distinct from a genuine empty model list and must skip the
@@ -123,6 +158,133 @@ ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-27B" "PlainLocal" >/dev/nul
 grep -A8 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 131072"
 grep -A8 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_output_tokens: 16384"
 grep -A8 "model_name: PlainLocal-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 8192"
+# ── --json contract: proxy status ────────────────────────────────────────────
+json_check() {
+  local label="$1"; shift
+  local out
+  out="$("$@" 2>/dev/null)" || { echo "FAIL($label): nonzero exit"; exit 1; }
+  print -r -- "$out" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{try{JSON.parse(s)}catch(e){console.error(\"invalid JSON\");process.exit(1)}})" \
+    || { echo "FAIL($label): invalid JSON"; exit 1; }
+}
+assert_json_key() {
+  local label="$1" json="$2" key="$3"
+  print -r -- "$json" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const o=JSON.parse(s);if(!(process.argv[1] in o)){console.error(\"missing key\");process.exit(1)}})" "$key" \
+    || { echo "FAIL($label): missing key $key"; exit 1; }
+}
+ps_json="$("$HOME/.local/bin/ai-litellm" proxy status --json 2>/dev/null)"
+json_check "proxy status --json" "$HOME/.local/bin/ai-litellm" proxy status --json
+for k in config settings baseUrl health configCurrency log pid pidFile lock; do
+  assert_json_key "proxy status --json" "$ps_json" "$k"
+done
+# default output unchanged: still human text, no leading brace
+ps_text="$("$HOME/.local/bin/ai-litellm" proxy status 2>/dev/null)"
+[[ "$ps_text" != \{* ]] || { echo "FAIL: default proxy status became JSON"; exit 1; }
+echo "ok: proxy status --json"
+# ── --json contract: model list + model limits ────────────────────────────────
+ml_json="$("$HOME/.local/bin/ai-litellm" model list --json 2>/dev/null)"
+json_check "model list --json" "$HOME/.local/bin/ai-litellm" model list --json
+print -r -- "$ml_json" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);if(!Array.isArray(a)||a.length===0){console.error(\"not a non-empty array\");process.exit(1)}if(!(\"name\" in a[0])||!(\"backend\" in a[0])){console.error(\"missing name/backend\");process.exit(1)}})" \
+  || { echo "FAIL: model list --json shape"; exit 1; }
+json_check "model limits --json" "$HOME/.local/bin/ai-litellm" model limits --json
+echo "ok: model list/limits --json"
+# ── --json contract: harness list + key status ────────────────────────────────
+json_check "harness list --json" "$HOME/.local/bin/ai-litellm" harness list --json
+hl_json="$("$HOME/.local/bin/ai-litellm" harness list --json 2>/dev/null)"
+print -r -- "$hl_json" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);const names=a.map(x=>x.name).sort().join(\",\");if(names!==\"claude,codex,goose,opencode\"){console.error(\"unexpected harnesses: \"+names);process.exit(1)}for(const h of a){for(const k of [\"adapter\",\"valid\",\"cliInstalled\"]) if(!(k in h)){console.error(\"missing \"+k);process.exit(1)}}})" \
+  || { echo "FAIL: harness list --json shape"; exit 1; }
+json_check "key status --json" "$HOME/.local/bin/ai-litellm" key status --json
+ks_json="$("$HOME/.local/bin/ai-litellm" key status --json 2>/dev/null)"
+assert_json_key "key status --json" "$ks_json" openrouter
+assert_json_key "key status --json" "$ks_json" master
+echo "ok: harness/key --json"
+# ── --json contract: harness info ────────────────────────────────────────────
+# B1: harness info --json (no name) must emit {} and exit 0
+hi_empty="$("$HOME/.local/bin/ai-litellm" harness info --json 2>/dev/null)"
+[[ "$hi_empty" == "{}" ]] || { echo "FAIL: harness info --json (no name) did not emit {}; got: $hi_empty"; exit 1; }
+echo "ok: harness info --json no-name = {}"
+# B2: harness info <name> --json baseUrl must contain http and no {{ templates
+hi_claude="$("$HOME/.local/bin/ai-litellm" harness info claude --json 2>/dev/null)"
+node -e "const o=JSON.parse(process.argv[1]);const u=o.baseUrl||\"\";\
+if(!u.includes(\"http\")){console.error(\"baseUrl missing http: \"+u);process.exit(1)}\
+if(u.includes(\"{{\")){console.error(\"baseUrl has unresolved template: \"+u);process.exit(1)}" "$hi_claude" \
+  || { echo "FAIL: harness info claude --json baseUrl not resolved"; exit 1; }
+echo "ok: harness info claude --json baseUrl resolved"
+# M1: isolationEnv key present, isolation key absent
+node -e "const o=JSON.parse(process.argv[1]);\
+if(!(\"isolationEnv\" in o)){console.error(\"missing isolationEnv\");process.exit(1)}\
+if(\"isolation\" in o){console.error(\"stale isolation key still present\");process.exit(1)}" "$hi_claude" \
+  || { echo "FAIL: harness info claude --json isolationEnv key wrong"; exit 1; }
+echo "ok: harness info claude --json isolationEnv key"
+# ── --json contract: route list, runtime status, reasoning matrix, context matrix ──
+for cmd in "route list" "runtime status" "reasoning matrix" "context matrix"; do
+  json_check "$cmd --json" "$HOME/.local/bin/ai-litellm" ${=cmd} --json
+done
+echo "ok: route/runtime/reasoning/context --json"
+# ── H4: usage labels are real verbs; Effort is a reference, not a command ──
+usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
+[[ "$usage_out" == *"Uninstall:"* ]]      || { echo "FAIL: usage missing 'Uninstall:' label" >&2; exit 1; }
+[[ "$usage_out" == *"Capabilities:"* ]]   || { echo "FAIL: usage missing 'Capabilities:' label" >&2; exit 1; }
+[[ "$usage_out" != *"  Delete:"* ]]       || { echo "FAIL: usage still has stale 'Delete:' label" >&2; exit 1; }
+[[ "$usage_out" != *"  Caps:"* ]]         || { echo "FAIL: usage still has stale 'Caps:' label" >&2; exit 1; }
+# Effort enum must NOT be presented as a left-hand command token
+[[ "$usage_out" != *"  Effort:"* ]]       || { echo "FAIL: Effort still formatted as a command row" >&2; exit 1; }
+[[ "$usage_out" == *"effort values"* ]]   || { echo "FAIL: Effort reference heading missing" >&2; exit 1; }
+echo "ok: usage labels (H4)"
+
+# H6: route probing consolidated to a single spelling: route probe.
+# IMPORTANT: this whole battery runs inside a zsh -fc SINGLE-QUOTED string, so
+# the source here must contain NO apostrophes. The deprecation warning contains
+# literal quotes (ai-litellm: QUOTEmodel probeQUOTE is deprecated; use ...), so
+# every apostrophe position is matched with a glob * instead of a literal quote.
+# Deprecated spellings still run but WARN+delegate toward route probe (never
+# silently break). The warn prints to stderr before the network probe runs, so
+# 2>&1 + substring captures it even though the probe then fails (proxy down in
+# the throwaway HOME) -- hence the trailing || true; we assert only on the warn.
+[[ "$("$HOME/.local/bin/ai-litellm" model probe X 2>&1 || true)" == *"model probe"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: model probe not deprecated to route probe" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" route check X 2>&1 || true)" == *"route check"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: route check not deprecated to route probe" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" probe-route X 2>&1 || true)" == *"probe-route"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: probe-route not deprecated to route probe" >&2; exit 1; }
+# Canonical route probe with NO args defaults to all models (absorbed check):
+# it must NOT print the empty-args usage error that the bare probe fn emits.
+[[ "$("$HOME/.local/bin/ai-litellm" route probe 2>&1 || true)" != *"Usage: ai-litellm probe-route <model_name>"* ]] || { echo "FAIL: route probe with no arg did not default to all models" >&2; exit 1; }
+# Route usage no longer advertises check; consolidated to probe [model...].
+route_usage="$("$HOME/.local/bin/ai-litellm" route bogus 2>&1 || true)"
+[[ "$route_usage" == *"route list|info [model]|probe [model...]"* ]] || { echo "FAIL: route usage not consolidated to probe [model...]" >&2; exit 1; }
+[[ "$route_usage" != *"check ["* ]] || { echo "FAIL: route usage still advertises a check verb" >&2; exit 1; }
+# Model usage no longer advertises a probe <model...> spelling (still works via alias).
+[[ "$("$HOME/.local/bin/ai-litellm" model bogus 2>&1 || true)" != *"|probe <model"* ]] || { echo "FAIL: model usage still advertises probe <model...>" >&2; exit 1; }
+# Top-level --help no longer advertises route check.
+help_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
+[[ "$help_out" != *"check [model...]"* ]] || { echo "FAIL: --help still advertises route check" >&2; exit 1; }
+echo "ok: route probe consolidation (H6)"
+
+# ── H5: unified top-level `ai-litellm doctor` runs the full battery by default ──
+# Doctors print headings and return nonzero when the proxy/runtime is down (it is,
+# in the throwaway HOME), so we assert on OUTPUT headings, not exit codes -- hence
+# the trailing || true. No apostrophes here (single-quoted zsh -fc, see H6 note).
+full_doctor="$("$HOME/.local/bin/ai-litellm" doctor 2>&1 || true)"
+[[ "$full_doctor" == *"ai-litellm doctor"* ]]          || { echo "FAIL: doctor full battery missing global/proxy pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm context doctor"* ]]  || { echo "FAIL: doctor full battery missing context pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm reasoning doctor"* ]] || { echo "FAIL: doctor full battery missing reasoning pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm model policy audit"* ]] || { echo "FAIL: doctor full battery missing model-policy pass" >&2; exit 1; }
+# Scoping flags delegate to the matching group doctor (and only that one).
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --proxy 2>&1 || true)"     == *"ai-litellm doctor"* ]]              || { echo "FAIL: doctor --proxy" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --context 2>&1 || true)"   == *"ai-litellm context doctor"* ]]      || { echo "FAIL: doctor --context" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --reasoning 2>&1 || true)" == *"ai-litellm reasoning doctor"* ]]    || { echo "FAIL: doctor --reasoning" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --policy 2>&1 || true)"    == *"ai-litellm model policy audit"* ]]  || { echo "FAIL: doctor --policy reaches model-policy audit" >&2; exit 1; }
+# --runtime with no name errors with the runtime usage guard (reachable via doctor).
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --runtime 2>&1 || true)" == *"runtime <name>"* ]]                  || { echo "FAIL: doctor --runtime usage guard" >&2; exit 1; }
+# Unknown scope prints the doctor usage and does NOT run a battery.
+doctor_usage="$("$HOME/.local/bin/ai-litellm" doctor --bogus 2>&1 || true)"
+[[ "$doctor_usage" == *"doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]"* ]] || { echo "FAIL: doctor unknown scope usage" >&2; exit 1; }
+# Back-compat: the group doctors and audit model-policy still work standalone.
+[[ "$("$HOME/.local/bin/ai-litellm" audit model-policy 2>&1 || true)" == *"ai-litellm model policy audit"* ]] || { echo "FAIL: audit model-policy back-compat" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" proxy doctor 2>&1 || true)"       == *"ai-litellm doctor"* ]]              || { echo "FAIL: proxy doctor back-compat" >&2; exit 1; }
+# Deprecated --doctor flat flag still runs, warns toward the canonical spelling.
+deprecated_doctor="$("$HOME/.local/bin/ai-litellm" --doctor 2>&1 || true)"
+[[ "$deprecated_doctor" == *"--doctor"*" is deprecated; use "*"ai-litellm doctor"* ]] || { echo "FAIL: --doctor not deprecated to doctor" >&2; exit 1; }
+# Usage advertises the unified doctor row.
+[[ "$help_out" == *"Doctor:"* ]] || { echo "FAIL: --help missing unified Doctor row" >&2; exit 1; }
+echo "ok: unified doctor (H5)"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.
@@ -136,7 +298,7 @@ ai_litellm_model_info_anchor_refs_ok
 for harness in "${(@f)$(ai_litellm_harness_names)}"; do
   ai_litellm_harness_validate "$harness"
 done
-ai_litellm_model_limits GLM-5.1-openrouter >/dev/null
+ai_litellm_model_limits GLM-5.2-openrouter >/dev/null
 ai_litellm_context_gateway_clamp_policy_ok
 ai_litellm_context_gateway_clamp_configured
 # Output-reservation policy must agree across all descriptors + the gateway copy.
@@ -154,7 +316,7 @@ ai_litellm_context_gateway_cost_guardrail_configured
 ai_litellm_context_observations_ok
 ai_litellm_model_info_anchor_refs_ok
 openrouter_models_fixture="$HOME/openrouter-models.json"
-print -r -- "{\"data\":[{\"id\":\"deepseek/deepseek-v4-pro\",\"context_length\":1048576,\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":384000},\"supported_parameters\":[\"reasoning\"]},{\"id\":\"moonshotai/kimi-k2.6\",\"context_length\":262144,\"top_provider\":{\"context_length\":262142,\"max_completion_tokens\":262142},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]},{\"id\":\"z-ai/glm-5.1\",\"context_length\":202752,\"top_provider\":{\"context_length\":202752,\"max_completion_tokens\":null},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]}]}" > "$openrouter_models_fixture"
+print -r -- "{\"data\":[{\"id\":\"deepseek/deepseek-v4-pro\",\"context_length\":1048576,\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":384000},\"supported_parameters\":[\"reasoning\"]},{\"id\":\"moonshotai/kimi-k2.6\",\"context_length\":262144,\"top_provider\":{\"context_length\":262142,\"max_completion_tokens\":262142},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]},{\"id\":\"z-ai/glm-5.2\",\"context_length\":1048576,\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":131072},\"supported_parameters\":[\"reasoning\",\"reasoning_effort\"]}]}" > "$openrouter_models_fixture"
 export AI_LITELLM_OPENROUTER_MODELS_JSON="$openrouter_models_fixture"
 ai_litellm_model_refresh_capabilities --check >/dev/null
 ai_litellm_model_policy_audit >/dev/null
@@ -205,9 +367,9 @@ test "$(ai_litellm_harness_json codex models.default)" = "gpt-5.5"
 budget="$(ai_litellm_harness_output_budget claude sonnet Kimi-K2.6-openrouter)"
 test "$(print -r -- "$budget" | jq -r ".effectiveInput > 0 and .reservation < .capability")" = "true"
 codex_budget="$(ai_litellm_harness_output_budget codex gpt-5.4 gpt-5.4)"
-test "$(print -r -- "$codex_budget" | jq -r ".effectiveInput")" = "221950"
+test "$(print -r -- "$codex_budget" | jq -r ".effectiveInput")" = "1008384"
 codex_catalog_map="$(ai_litellm_codex_catalog_context_map codex)"
-test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4\"")" = "221950"
+test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4\"")" = "1008384"
 test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4-mini\"")" = "221950"
 test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.5\"")" = "1008384"
 test "$(print -r -- "$codex_catalog_map" | jq -r ".\"Gemma4-12B-omlx\"")" = "8192"
@@ -215,7 +377,7 @@ codex_catalog="$(ai_litellm_harness_json codex paths.modelCatalog)"
 mkdir -p "${codex_catalog:h}"
 print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":262144}]}" > "$codex_catalog"
 ! ai_litellm_doctor_limit_sync >/dev/null 2>&1
-print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":221950}]}" > "$codex_catalog"
+print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":1008384}]}" > "$codex_catalog"
 ai_litellm_doctor_limit_sync >/dev/null
 ai_litellm_render_claude_settings claude
 claude_settings="$(ai_litellm_harness_json claude paths.settingsArg)"
@@ -303,8 +465,8 @@ direct_output="$(PATH="$stub_dir:$PATH" OPENROUTER_API_KEY="TEST_OPENROUTER" cla
 [[ "$direct_output" == *"max_tokens_set=0"* ]]
 [[ "$direct_output" == *"sonnet=moonshotai/kimi-k2.6"* ]]
 [[ "$direct_output" == *"sonnet_name=Kimi-K2.6 (openrouter)"* ]]
-[[ "$direct_output" == *"haiku=z-ai/glm-5.1"* ]]
-[[ "$direct_output" == *"haiku_name=GLM-5.1 (openrouter)"* ]]
+[[ "$direct_output" == *"haiku=z-ai/glm-5.2"* ]]
+[[ "$direct_output" == *"haiku_name=GLM-5.2 (openrouter)"* ]]
 [[ "$direct_output" == *"subagent=deepseek/deepseek-v4-pro"* ]]
 [[ "$direct_output" == *"caps=0:"* ]]
 [[ "$direct_output" == *"--model sonnet"* ]]
@@ -350,8 +512,8 @@ mv "$caps_settings.tmp" "$caps_settings"
   [[ "$proxy_output" == *"max_tokens_set=1"* ]]
   [[ "$proxy_output" == *"sonnet=Kimi-K2.6-openrouter"* ]]
   [[ "$proxy_output" == *"sonnet_name=Kimi-K2.6 (openrouter)"* ]]
-  [[ "$proxy_output" == *"haiku=Qwen3.6-27B-omlx"* ]]
-  [[ "$proxy_output" == *"haiku_name=Qwen3.6-27B (omlx)"* ]]
+  [[ "$proxy_output" == *"haiku=Gemma4-12B-omlx"* ]]
+  [[ "$proxy_output" == *"haiku_name=Gemma4-12B (omlx)"* ]]
   [[ "$proxy_output" == *"caps=1:"* ]]
   [[ "$proxy_output" == *"--model sonnet"* ]]
 )
@@ -363,11 +525,11 @@ goose_model_blocked="$(ai_litellm_launch_env_injector goose DeepSeek-V4-Pro-open
 [[ "$goose_model_blocked" == *"blocked"* ]]
 "$HOME/.local/bin/claude-litellm" --status >/dev/null
 source "$prefix/config/codex-litellm/shell.zsh"
-test "$(_codex_litellm_resolve_model openrouter/deepseek/deepseek-v4-pro)" = "gpt-5.5"
-test "$(_codex_litellm_resolve_model DeepSeek-V4-Pro-openrouter)" = "gpt-5.5"
-test "$(_codex_litellm_resolve_model openrouter/moonshotai/kimi-k2.6)" = "gpt-5.4"
-test "$(_codex_litellm_resolve_model openai/gemma4-12b)" = "Gemma4-12B-omlx"
-test "$(_codex_litellm_resolve_model Gemma4-12B-omlx)" = "Gemma4-12B-omlx"
+test "$(_codex_litellm_resolve_model openrouter/deepseek/deepseek-v4-pro)" = "gpt-5.4"
+test "$(_codex_litellm_resolve_model DeepSeek-V4-Pro-openrouter)" = "gpt-5.4"
+test "$(_codex_litellm_resolve_model openrouter/moonshotai/kimi-k2.6)" = "gpt-5.4-mini"
+test "$(_codex_litellm_resolve_model openai/local-omlx-gemma4-12b)" = "gpt-5.3-codex"
+test "$(_codex_litellm_resolve_model Gemma4-12B-omlx)" = "gpt-5.3-codex"
 # Pre-flight: a codex binary that cannot start (e.g. the macOS-Tahoe dyld hang)
 # must make a session launch fail LOUD + fast, never hang. A hanging stub proves
 # the bounded probe times out and reports actionably; an instant stub passes.
@@ -441,10 +603,10 @@ test ! -e "$HOME/.codex"
 '
 
 spaced_prefix="$spaced_home/with space/ai-litellm-fabric"
-LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-spaced-$$" HOME="$spaced_home" "$repo_root/scripts/install.zsh" --prefix "$spaced_prefix" >/dev/null
+AI_LITELLM_SKIP_DASH_VENV=1 LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-spaced-$$" HOME="$spaced_home" "$repo_root/scripts/install.zsh" --prefix "$spaced_prefix" >/dev/null
 HOME="$spaced_home" "$spaced_home/.local/bin/ai-litellm" --help >/dev/null
 grep -q "'$spaced_prefix'" "$spaced_home/.local/bin/ai-litellm"
-LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-spaced-$$" HOME="$spaced_home" "$repo_root/scripts/install.zsh" --prefix "$spaced_prefix" >/dev/null
+AI_LITELLM_SKIP_DASH_VENV=1 LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-spaced-$$" HOME="$spaced_home" "$repo_root/scripts/install.zsh" --prefix "$spaced_prefix" >/dev/null
 if find "$spaced_home/.local" -name "*.bak.*" | grep -q .; then
   echo "Unexpected backup files after identical reinstall" >&2
   find "$spaced_home/.local" -name "*.bak.*" >&2
@@ -460,6 +622,15 @@ fi
 if HOME="$spaced_home" "$repo_root/scripts/uninstall.zsh" --prefix "$spaced_home/not-fabric" >/dev/null 2>&1; then
   echo "Unsafe uninstall prefix was accepted" >&2
   exit 1
+fi
+
+dash_venv_python="${real_home}/.local/share/ai-litellm-fabric/state/dash-venv/bin/python"
+if [[ -x "$dash_venv_python" ]] && "$dash_venv_python" -c 'import textual, pytest' >/dev/null 2>&1; then
+  ( cd "$repo_root/config/ai-litellm" && "$dash_venv_python" -m pytest fabric_dash/tests/ -q ) \
+    || { echo "FAIL: fabric_dash tests"; exit 1; }
+  echo "ok: fabric_dash tests"
+else
+  echo "note: skipping fabric_dash tests (textual/pytest not installed)" >&2
 fi
 
 echo "ok"

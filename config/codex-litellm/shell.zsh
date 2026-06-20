@@ -313,6 +313,12 @@ puts JSON.generate(entries)
   catalog_context_json="$(ai_litellm_codex_catalog_context_map "$CODEX_LITELLM_HARNESS" 2>/dev/null)" || catalog_context_json="{}"
   [[ -n "$catalog_context_json" ]] || catalog_context_json="{}"
 
+  # Clone codex's --bundled baseline catalog. This is the OFFLINE source of
+  # truth for the isolated codex-litellm: the ACTIVE catalog (gpt-5.3-codex-spark
+  # etc.) is network/login-fetched into native ~/.codex only — an isolated,
+  # logged-out CODEX_HOME cannot retrieve it (a `codex debug models` there just
+  # reads back this generated file, circularly). So facade slugs must come from
+  # --bundled, and litellm routes must cover exactly those --bundled slugs.
   # `codex debug models` is an external binary that can hang (auth/network/GUI
   # subprocess). Bound it so a stuck codex never hangs the whole sync — on
   # timeout the pipe fails and the existing catalog is kept (see the || below).

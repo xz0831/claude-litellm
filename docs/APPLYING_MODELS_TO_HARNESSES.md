@@ -10,8 +10,10 @@
 >
 > **Deeper "why"** lives in [`DESIGN_RATIONALE.md`](DESIGN_RATIONALE.md) (§4 token policy)
 > and [`AI_AGENT_LITELLM_ARCHITECTURE.md`](AI_AGENT_LITELLM_ARCHITECTURE.md) (operations,
-> decision logs). The audits [`MODEL_HARNESS_CONTEXT_AUDIT_FOR_CODEX.md`] and
-> [`CODEX_RECOMMENDATION_CAPABILITY_OBSERVABILITY.md`] are the empirical evidence base.
+> decision logs). The empirical evidence base — boundary-probe numbers and the
+> owned cost-guardrail interaction — is preserved in
+> [`context-observations.json`](../config/ai-litellm/context-observations.json)
+> and the token-policy sections of the two documents above.
 > This file is the **practitioner's view**: given model X and harness Y, what do I set and why.
 
 ---
@@ -160,7 +162,7 @@ your machine with `ai-litellm context matrix` and `ai-litellm model limits <name
   provider rejects. (On Claude the guardrail still caps the *operating* input at 200K;
   the 221,950 is the true ceiling the Codex `gpt-5.4` surface uses.)
 
-### 4c. GLM-5.1 — provider omits the output cap (cloud / OpenRouter)
+### 4c. GLM-5.2 — provider omits the output cap (cloud / OpenRouter)
 - **Capability:** input **202,752** (provider), output **131,072** — but this output is
   **owned-policy**: OpenRouter omits `max_completion_tokens` for GLM, so the fabric sets a
   conservative ceiling and labels it (`x_output_source: provider-omits-max-completion-tokens`).
