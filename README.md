@@ -7,7 +7,6 @@ This repository manages the wrapper layer around local agent CLIs:
 - `ai-litellm`: shared proxy lifecycle, routing, context/reasoning doctors
 - `claude-litellm`: Claude Code on non-Anthropic models — LiteLLM proxy by default (OpenRouter + local oMLX routes), with an OpenRouter Anthropic-compatible direct mode (`--direct`)
 - `codex-litellm`: Codex CLI through the shared LiteLLM proxy
-- `opencode-litellm`: OpenCode through the shared LiteLLM proxy
 
 It shares the user-scope environment with native harnesses while keeping
 session state isolated per variant:
@@ -28,7 +27,7 @@ session state isolated per variant:
   plugin state) exactly as a native session would
 - no writes to `~/.codex` (codex keeps a fully isolated `CODEX_HOME`;
   see the session-boundary decision log in the architecture guide)
-- no replacement of `claude`, `codex`, or `opencode`
+- no replacement of `claude` or `codex`
 - no API keys in git
 
 The installed wrapper layer is one package directory plus thin global command
@@ -56,9 +55,9 @@ Tracked source:
 - `docs/DESIGN_RATIONALE.md`: why every non-obvious decision is the way it is
   (rationale, rejected alternatives, standing counter-arguments, honest unknowns)
 - `docs/APPLYING_MODELS_TO_HARNESSES.md`: practitioner playbook — given a model
-  (cloud/OpenRouter or local/oMLX), how to apply it to Claude Code / Codex /
-  OpenCode with the context & token budgeting right, with worked examples
-  (DeepSeek-V4-Pro, Kimi-K2.6, GLM-5.2, local Qwen3.6)
+  (cloud/OpenRouter or local/oMLX), how to apply it to Claude Code / Codex with
+  the context & token budgeting right, with worked examples (DeepSeek-V4-Pro,
+  Kimi-K2.6, GLM-5.2, local Qwen3.6)
 - `scripts/install.zsh`: installer for another Mac
 - `scripts/uninstall.zsh`: package/shim remover
 
@@ -88,9 +87,8 @@ Prerequisites on the target Mac:
 - `~/.local/bin` on `PATH`
 
 Harness CLIs are optional. Install native `claude` only if using
-`claude-litellm`, native `codex` only if using `codex-litellm`, and
-`opencode` only if using that harness. A Claude-only machine can install the
-package without Codex.
+`claude-litellm` and native `codex` only if using `codex-litellm`. A
+Claude-only machine can install the package without Codex.
 
 Preview:
 
@@ -115,7 +113,6 @@ layer, and creates a local LiteLLM master key if one is not already available:
 - `~/.local/bin/ai-litellm`
 - `~/.local/bin/claude-litellm`
 - `~/.local/bin/codex-litellm`
-- `~/.local/bin/opencode-litellm`
 - `~/.local/bin/openrouter-key-status`
 - `~/.local/bin/litellm-master-key-status`
 
@@ -306,8 +303,6 @@ they send or infer per-request `max_tokens` values:
 - Codex LiteLLM: generated catalog `context_window` for OpenRouter-backed
   slugs is reduced to the safe input budget because Codex does not expose a
   reliable Responses output cap
-- OpenCode: `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` for the custom
-  OpenAI-compatible provider ceiling
 
 For shared-window providers, the effective input budget is:
 
