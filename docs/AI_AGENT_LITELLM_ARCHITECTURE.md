@@ -92,6 +92,7 @@ rg -n '^[[:space:]]*(model_catalog_json|model_context_window)[[:space:]]*=' ~/.c
 `ai-litellm`은 noun-verb 체계를 정본으로 한다. 그룹(noun)이 시스템 개념이고, verb가 그 개념에 대한 동작이다.
 
 ```zsh
+ai-litellm status  # proxy/harness/runtime/key/capability 한 방 요약 (+--json)
 ai-litellm proxy   status|start|stop|restart|logs [lines]|doctor [opts]
 ai-litellm harness list|info <name>|launch <name> [model] [args...]|alias get <name>|alias set <harness> <tier> <model>|reasoning [name|allowed <name>|set <name> <effort>|unset <name>]
 ai-litellm runtime list|status [name]|doctor <name>
@@ -103,11 +104,9 @@ ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
 ai-litellm audit model-policy
 ai-litellm doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]
 ai-litellm key     status|set <openrouter|ENV_VAR|provider-name> [value]
-ai-litellm router  schema|snapshot|plan|explain|execute --json [intent opts]
 ai-litellm sync [--dry-run] [--no-restart]  # 단일 출처에서 파생 설정 재생성 + 기본적으로 proxy 재기동
 ai-litellm uninstall  # package directory와 global shim 제거
 ai-litellm capabilities  # proxy/runtime capability 요약
-ai-litellm dash  # fabric control-plane TUI 실행 (또는 단축 명령 `fabric`)
 ```
 
 기존 flat 명령(`ai-litellm start`, `route-info`, `harnesses`, `launch`, `claude-litellm --start` 등)은 그대로 동작하되 deprecated이며, stderr에 정본 형태를 안내한다. proxy lifecycle은 harness wrapper가 아니라 `ai-litellm proxy *`가 소유한다. `claude-litellm`/`codex-litellm`의 `--start|--stop|--restart|--logs|--doctor`는 deprecated이고, `--list`/`--status`(harness별 정보)와 `codex-litellm --route-info|--refresh-catalog`(codex 전용)만 wrapper에 남긴다.
@@ -120,7 +119,7 @@ ai-litellm dash  # fabric control-plane TUI 실행 (또는 단축 명령 `fabric
 
 ### `--json` read surface (additive, formatter-only)
 
-read-only 명령군에 `--json` 출력이 추가됐다. `--json`은 **순수 출력 포매터**일 뿐이며 state를 다시 파생하지 않는다 — `--json` 없는 기본 text 출력은 byte-identical로 유지된다. 키는 camelCase, 항상 valid JSON + exit 0이고, 읽을 수 없는 source는 `{}`/`[]`로 떨어진다(빈-출력 정직성). read-only 명령만 대상이고 mutating 명령에는 붙이지 않는다. 이 표면이 `fabric` 대시보드가 소비하는 계약이다.
+read-only 명령군에 `--json` 출력이 추가됐다. `--json`은 **순수 출력 포매터**일 뿐이며 state를 다시 파생하지 않는다 — `--json` 없는 기본 text 출력은 byte-identical로 유지된다. 키는 camelCase, 항상 valid JSON + exit 0이고, 읽을 수 없는 source는 `{}`/`[]`로 떨어진다(빈-출력 정직성). read-only 명령만 대상이고 mutating 명령에는 붙이지 않는다. 이 표면은 스크립팅·자동화용 계약이다 — `ai-litellm status --json`이 이 중 다섯 개(`proxy status`/`harness list`/`runtime status`/`key status`/`model list`)를 그대로 합성해(`{proxy,harnesses,runtimes,keys,models}`) 소비자 노릇을 한다.
 
 | 명령 | emitter |
 | --- | --- |
@@ -135,10 +134,6 @@ read-only 명령군에 `--json` 출력이 추가됐다. `--json`은 **순수 출
 | `key status --json` | `ai_litellm_key_status_json` |
 
 구현은 lib.zsh 안에 sibling `*_json` emitter + `ai_litellm_emit_json` 헬퍼로 두고, matrix류는 출력 분기 env 플래그(`AI_LITELLM_MATRIX_JSON`)로 기존 Ruby 경로를 재사용한다(중복 없음). backend 로직은 건드리지 않았다.
-
-### fabric 대시보드 (`fabric` / `ai-litellm dash`)
-
-`fabric`은 ai-litellm CLI 위의 Textual TUI control plane이다. `bin/fabric` shim이 `exec "$AI_LITELLM_FABRIC_HOME/bin/ai-litellm" dash "$@"`로 위임하고, `ai-litellm dash` dispatch가 `"$AI_LITELLM_STATE_HOME/dash-venv/bin/python" -m fabric_dash`를 실행한다(`PYTHONPATH`에 `config/ai-litellm` 추가; venv가 없으면 생성 안내 후 비-0). Python 패키지는 `config/ai-litellm/fabric_dash/`다. 기본 read-only이며 위 `--json` 표면만 읽는다. mutating action은 확인 모달 뒤에 게이트하고(중단성 RESTART/DESTRUCTIVE·과금성 BILLABLE launch 모두 Cancel-first `ConfirmModal`), SAFE action(start/doctor 및 e/k/m 변경)은 바로 실행하며, auto-refresh는 엄격히 read-only다. harness launch는 터미널을 넘겨준다(exit + `os.execvp`). 상세 설계·모듈·안전 분류·테스트는 [FABRIC_DASHBOARD.md](FABRIC_DASHBOARD.md)가 정본이다.
 
 ## 확인 명령
 
@@ -219,21 +214,6 @@ ai-litellm harness launch claude --proxy haiku -p "Reply with exactly OK" --no-s
 ai-litellm harness launch codex exec --skip-git-repo-check --sandbox read-only "Reply with exactly OK"
 ```
 
-## Router / 오케스트레이션
-
-`ai-litellm router`는 agent/orchestrator용 JSON control surface다. `fabric` TUI의 Router 패널은 이 표면을 사람이 검토·dry-run·확인 실행하는 얇은 front-end일 뿐, 선택 로직을 재구현하지 않는다. 기존 descriptor-backed harness launch를 우회하지 않고, 현재 키 상태·runtime 상태·모델 한도·Claude tier alias·Codex facade를 읽어 선택만 수행한다. JSON payload는 `schemaVersion: 1`, `contractVersion: "router.v1"`을 포함한다. 기본 선택은 `claude/opus`이며, 로컬 전용 실행이 필요하면 `--local-only` 또는 `--no-billable`로 billable/cloud route를 제외한다.
-
-```zsh
-ai-litellm router schema --json
-ai-litellm router snapshot --json
-ai-litellm router plan --json --estimated-input-tokens 1000
-ai-litellm router explain --json --preferred-harness codex --estimated-input-tokens 200000
-ai-litellm router execute --json --dry-run --prompt "Reply with exactly OK"
-ai-litellm router execute --json --prompt "Reply with exactly OK" --confirm-billable
-```
-
-`plan`/`execute`의 route는 사람용 `reasons`/`risks`/`rejected` 문자열과 함께 agent용 `selectionReasons`/`riskDiagnostics`/`rejections` diagnostic 객체를 제공한다. diagnostic 객체는 `{code,message,details?}` 형식이며, orchestration code는 문자열 파싱 대신 `code`를 본다. `execute`의 실제 실행은 non-interactive one-shot prompt만 지원한다. Claude는 `-p` + session persistence off, Codex는 `exec --sandbox read-only`로 낮춘다. 선택된 route가 billable이면 `--confirm-billable` 없이는 실행하지 않고 `errorCode: "billing.confirmation_required"`와 JSON error를 반환한다. 이 계층은 supervisor가 아니라 router/launcher다. 장기 세션, 터미널 소유권, harness별 격리와 provider secret 주입은 계속 기존 wrapper가 담당한다.
-
 ## 토큰 한도 / Context Window 관리
 
 LiteLLM-backed 모델별 context window(`max_input_tokens`)와 max output(`max_output_tokens`)의 단일 출처는 `litellm_config.yaml`의 `x-limits:` 앵커다. **underlying provider 모델당 앵커 1개**를 두고, 모든 surface 엔트리가 `model_info: *alias`로 참조한다. 8개의 surface model_name이 4개의 underlying 모델로 수렴하므로, facade가 늘어도 한도는 underlying 앵커에만 붙는다.
@@ -244,7 +224,7 @@ LiteLLM-backed 모델별 context window(`max_input_tokens`)와 max output(`max_o
 
 중요한 구분:
 
-- **출력 능력치 또는 policy ceiling**: provider가 공개한 최대 출력 또는, 공개값이 없을 때 명시적으로 소유한 보수적 ceiling. capability metadata가 필요한 generated artifact는 여기서 파생하되 confidence를 함께 본다.
+- **출력 능력치 또는 policy ceiling**: provider가 공개한 최대 출력 또는, 공개값이 없을 때 명시적으로 소유한 보수적 ceiling. capability metadata가 필요한 generated artifact는 여기서 파생하되 confidence를 함께 본다. 예: codex 생성 카탈로그의 `context_window`는 capability가 아니라 safe input budget이며, capability-파생 값은 confidence 라벨과 함께 본다.
 - **출력 예약(reservation)**: harness가 매 요청에서 provider에 예약시키는 출력 토큰. 공유 윈도우 provider가 `입력 + 예약 출력 <= context`로 회계하면 이 값은 작아야 한다.
 
 Claude direct 경로는 OpenRouter Anthropic Skin이 Claude Code native protocol을 직접 처리하도록 두므로 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`를 주입하지 않는다. Claude proxy fallback은 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`를 매 요청 `max_tokens` 예약으로 사용하므로, 이 env에는 `max_output_tokens` 능력치를 넣지 않는다. Codex LiteLLM은 Responses 요청에 신뢰할 만한 output cap을 주입하지 못하므로 generated catalog의 `context_window`를 safe input budget으로 낮춘다. 현재 reservation 기본 정책은 `32000`, tokenizer headroom `8192`, minimum input `32768`이다. proxy fallback 런처/생성기 계산식:
@@ -612,6 +592,7 @@ ai-litellm context observations
 ai-litellm context doctor
 ai-litellm route info
 ai-litellm proxy doctor
+ai-litellm status
 ai-litellm capabilities
 ```
 
@@ -665,6 +646,7 @@ ai-litellm key status
 - codex: 통합하지 않는다. CODEX_HOME은 monolithic이라 세션/메모리만 분리할 수 없고, memories sqlite에 provider 컬럼이 없어 약한 모델 메모리를 필터링할 수 없으며, 현 generator는 config.toml 전체 교체라 공유 시 native 설정을 파괴한다. 추후 공유가 필요하면 profile-v2(`codex -p <name>`, `$CODEX_HOME/<name>.config.toml` 레이어) 재작업이 전제이고, 그 경우에도 profile 파일에 `approval_policy`/`sandbox_mode`/`model_catalog_json`을 명시해야 한다(미명시 키는 native의 `approval=never`/`danger-full-access`를 상속함을 codex 0.138.0에서 실증).
 - goose: 2026-06-28 지원 종료. 이전 env-only shim과 descriptor는 제거했고, install/uninstall은 기존 설치본의 `goose-litellm` shim, descriptor, state만 legacy cleanup으로 삭제한다.
 - opencode: 2026-07-04 지원 종료. opencode는 자체 API/로컬 모델 연결이 일급 기능이라 래핑의 부가가치가 없다. descriptor·shim·어댑터는 제거했고, install/uninstall은 기존 설치본의 shim·descriptor·state만 legacy cleanup으로 삭제한다.
+- fabric 대시보드·router 표면: 2026-07-04 지원 종료. 관측 역할은 `ai-litellm status`(기존 read 표면 합성)로 대체; `fabric_dash`/`router_core`/전용 venv/`dash-tests` CI 잡 제거. `--json` read 계약은 스크립팅용으로 유지.
 
 ## 2026-06-12 표시명/로컬 모델 결정 로그
 

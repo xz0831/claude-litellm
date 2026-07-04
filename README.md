@@ -192,21 +192,9 @@ default, which can interrupt active LiteLLM-backed sessions. Use
 `ai-litellm sync --dry-run` to inspect actions first, or `--no-restart` to
 regenerate without bouncing the proxy.
 
-For orchestration, `ai-litellm router` exposes the same state as JSON and can
-prepare or run a bounded one-shot harness call:
-
-```zsh
-ai-litellm router schema --json
-ai-litellm router plan --json --estimated-input-tokens 1000
-ai-litellm router execute --json --dry-run --prompt 'Reply with exactly OK'
-ai-litellm router execute --json --prompt 'Reply with exactly OK' --confirm-billable
-```
-
-Router payloads carry `schemaVersion: 1` and `contractVersion: "router.v1"`.
-The default route is `claude/opus`. Use `--local-only` or `--no-billable` when
-the orchestrator must stay on local/free routes. Route diagnostics are available
-as stable `{code,message,details?}` objects so agents do not need to parse
-human-readable reason strings.
+For a one-shot summary of proxy status, Claude tier/model mapping, Codex
+default, key status, and capabilities, run `ai-litellm status` (add `--json`
+for the machine-readable form).
 
 Supported harnesses are optional on each machine. `sync`, `doctor`, and
 metadata commands must skip missing native CLIs cleanly; only launching that
@@ -353,39 +341,9 @@ ai-litellm doctor --context
 ai-litellm doctor --proxy
 ```
 
-## Dashboard
-
-`fabric` is a control-plane TUI over the `ai-litellm` commands. It reads
-through the `--json` surface only — it never re-derives state — and is
-read-only by default:
-
-```zsh
-fabric            # or: ai-litellm dash
-```
-
-It shows proxy health, router candidates, config currency, models/routes,
-runtimes, budget policy, and keys in one screen, with a read-only live
-auto-refresh. The Router panel is an inspect/override front-end for
-`ai-litellm router`: it shows the current intent (`no-billable`, estimated input,
-selected route), keeps the primary table to route identity/cost facts, moves
-selection reasons and risks into the selected-row detail area, and seeds
-plan/explain/dry-run/execute forms from the highlighted or clicked row.
-Mutating actions (sync/restart/stop, harness launch, router execute) gate behind
-a confirmation that names the consequence; disruptive and billable actions are
-Cancel-first. Router dry-runs pass prompts through stdin instead of argv/logs.
-Launching a harness hands the terminal over (the TUI exits and `exec`s the
-harness). The command palette is the `:` key only; router actions use the
-structured Router panel rather than raw palette commands.
-
-The dashboard runs from a package-owned Python venv at
-`$AI_LITELLM_STATE_HOME/dash-venv` with Textual installed there;
-`scripts/install.zsh` provisions it (skippable with
-`AI_LITELLM_SKIP_DASH_VENV=1`). The rest of the package works without it. See
-[docs/FABRIC_DASHBOARD.md](docs/FABRIC_DASHBOARD.md) for the full guide.
-
 ## Machine-readable output
 
-Read-only commands accept `--json` for scripting and the `fabric` dashboard:
+Read-only commands accept `--json` for scripting:
 
 ```zsh
 ai-litellm proxy status --json
@@ -403,7 +361,10 @@ ai-litellm key status --json
 `--json` is additive and formatter-only: it never re-derives state, and
 without it the default text output is byte-identical to before. It is only
 available on read-only commands; unreadable sources emit `{}` or `[]` with
-exit 0. This is the contract the `fabric` dashboard consumes.
+exit 0. This is a stable scripting contract: `ai-litellm status --json` is
+itself a consumer, composing five of these (`proxy status`, `model list`,
+`runtime status`, `harness list`, `key status`) into one payload
+(`{proxy,harnesses,runtimes,keys,models}`).
 
 ## Maintenance Boundary
 

@@ -192,43 +192,9 @@ claude/codex 두 현역 harness가 서로 다른 격리 전략을 쓰는 것은 
 
 ---
 
-## 6a. fabric 대시보드: read-then-act 컨트롤 플레인
+## 6a. fabric 대시보드 — retired 2026-07-04
 
-**fabric**(= `ai-litellm dash`)은 ai-litellm CLI 위의 Textual TUI 컨트롤 플레인이다(`config/ai-litellm/fabric_dash/`). 그 설계 결정들은 모두 하나의 명제에서 파생된다: **TUI는 CLI의 *관측*이지 CLI 로직의 *재구현*이 아니다.**
-
-**결정: read-then-act 분리 — 기본은 read-only, mutating 액션은 확인 모달로 게이트한다. 중단성(RESTART)·파괴적(DESTRUCTIVE)·과금성(BILLABLE) 등급은 모두 Cancel-우선 ConfirmModal이다(billable launch도 PR #2 경화에서 Cancel-우선으로 통일 — `_GUARDED`에 셋 다 포함).** [실증]
-
-`safety.classify(argv)`(`safety.py`)가 액션을 4계급으로 가른다: `SAFE`(start/doctor/read-only router plan/explain/dry-run — 자유 실행), `RESTART`, `BILLABLE`, `DESTRUCTIVE`. `ACTIONS` 테이블에서 SAFE인 start/doctor는 `needs_confirm=False`로 바로 돌고, sync/restart/stop은 `RESTART`로 ConfirmModal 뒤에 선다. Router execute와 harness launch는 BILLABLE gate를 탄다. 자동 갱신(auto-refresh)은 **엄격히 read-only**다 — 화면을 새로 그리는 폴링이 절대 mutating 명령을 부르지 않는다. 그 분리의 강제 지점은 `FabricClient`(`client.py`)가 *읽기/plan 표면만* 노출한다는 것이다: `proxy_status`/`model_list`/`harness_list`/`reasoning_matrix`/`router_plan` 등 `--json` read/plan 명령만 메서드로 있고(`route_list`/`context_matrix`는 round-1 리뷰에서 죽은 코드로 제거), 실행 측은 별도 `ActionRunner`(`actions.py`)에 격리됐다. 안전 기본값은 *구조*로 보장된다 — read 경로에는 실행 메서드가 없다.
-
-**결정: `FabricClient`는 실패 시 traceback이 아니라 빈 컨테이너를 반환한다(empty-on-failure), runner는 주입 가능하다.** [실증]
-
-`client.py` 헤더가 명시: "returns an empty container so the TUI shows 'empty', never a traceback." `_obj`/`_arr`이 `except Exception: return {}`/`return []`로 감싸 CLI가 죽거나 비-JSON을 뱉어도 패널이 "비어 있음"으로 graceful하게 표시된다. runner(`__init__(self, runner=None, ...)`)가 주입 가능한 덕에 대시 테스트 일체가 실제 CLI 없이 가짜 응답으로 전 패널·전 액션을 결정론적으로 돈다(`make_client_with({...})` 패턴, `tests/test_{app,actions_app,client,safety}.py`).
-
-**결정: 대시보드는 패키지 소유 venv(`$AI_LITELLM_STATE_HOME/dash-venv`)에 격리된다.** [기록]
-
-`bin/fabric` shim → `ai-litellm dash` 디스패치 → `"$AI_LITELLM_STATE_HOME/dash-venv/bin/python" -m fabric_dash`(lib.zsh L6180). install.zsh의 `ensure_dash_venv`(L367–)가 `$prefix/state/dash-venv`에 venv를 만들고 textual을 pip-install한다. 별도 venv인 이유는 PEP-668(externally-managed) 환경에서 시스템 파이썬에 textual을 함부로 설치할 수 없고, 대시보드는 ai-litellm의 zsh 코어와 의존성을 공유할 이유가 없기 때문이다 — TUI 의존성이 코어를 오염시키지 않는다. venv 빌드는 네트워크·느림이므로 `AI_LITELLM_SKIP_DASH_VENV`(check.zsh가 설정 — L63 등)로 게이트되어 구조 검사/CI는 빠르고 오프라인으로 돈다.
-
-**결정: harness launch는 터미널을 넘겨준다(`os.execvp`).** [기록] `__main__.py` L22: `os.execvp("ai-litellm", ["ai-litellm", "harness", "launch", harness])` — TUI가 살아서 자식을 감싸는 게 아니라, *exec로 자기를 대체*해 터미널 제어권을 harness에 완전히 양도한다. 대시보드는 launcher이지 supervisor가 아니다.
-
-**결정: `--json` read API는 output-FORMATTER-ONLY다 — 상태를 절대 재유도하지 않는다.** [실증]
-
-TUI가 소비하는 계약(proxy status, model list/limits, route list, runtime status, reasoning/context matrix, harness list/info, key status가 `--json` 획득)은 *형식 변환 계층*일 뿐이다: 기존 텍스트 출력과 동일한 소스에서 camelCase JSON을 방출하되 백엔드 로직은 한 줄도 안 건든다(default 텍스트 출력은 byte-identical 유지). lib.zsh의 형제 `*_json` emitter들(`ai_litellm_status_json` L2255 등)과 `ai_litellm_emit_json` 헬퍼(L96 — argv 쌍을 `@num:`/`@bool:`/`@null` 마커로 타입화해 JSON 직렬화)가 구현한다. 매트릭스(reasoning/context)는 코드를 복제하는 대신 `AI_LITELLM_MATRIX_JSON` env 플래그로 **기존 Ruby가 JSON을 방출**하게 해 단일 진실원을 지킨다. 읽을 수 없는 소스는 `{}`/`[]`를 주고 exit 0 — client.py의 empty-on-failure와 짝을 이룬다. read-only 명령에만 붙는다.
-
-**결정: 품질 보증은 Textual `run_test()` 파일럿으로 *렌더된* 위젯 트리를 검증한다(SVG 스냅샷 diff 아님).** [실증]
-
-테스트는 `async with app.run_test() as pilot`로 실제 앱을 띄워 `pilot.press(...)`/`show_panel(...)` 후 렌더 결과를 단언한다 — 예: `query_one("#status").content`에 "claude"가 있는지, Models/Router 패널이 텍스트 래핑이 아니라 진짜 `DataTable`을 렌더하는지(`test_app.py`), 잘못된 harness 셀이 회색이 아니라 빨강으로 신호하는지, router dry-run/execute prompt가 argv가 아니라 stdin으로만 흐르는지. 즉 "스냅샷 리뷰"는 *렌더된 출력*을 검사하는 것이지 SVG 이미지 비교 회귀(pytest-textual-snapshot류)가 아니다. 이 루프로 외부 UX 리뷰어의 화면 품질 리뷰 점수 90을 통과시켰다. 이 90은 Router 후보의 내부 `score`가 아니다. CI 잡 `dash-tests`(커밋 690c009)가 textual을 프로비저닝하고 이 테스트를 돌려 대시보드 회귀가 *조용히* CI를 통과하지 못하게 막는다 — venv가 없으면 check.zsh는 모듈 임포트 검사를 skip하므로(L78–83), CI의 전용 잡이 그 빈틈을 메운다.
-
-**결정: Router 패널은 internal score를 숨기고, 현재 intent와 highlighted route를 실행 의미에 연결한다.** [실증, 2026-06-29]
-
-`router_core`의 `score`는 품질 점수도 성공 확률도 아니라 후보 정렬용 내부 휴리스틱이다(기본 50점에 context headroom, local/non-billable, 기본 Claude opus, preferred harness/model 등을 더한다). 이를 TUI primary table에 `Score`로 노출하면 사용자는 "모델 품질 90점"으로 읽기 쉽다. 또 `reasons`/`risks`는 판단 근거로는 필요하지만 후보 비교 표에 넣으면 가장 긴 문장이 화면을 지배해 harness/model/provider/local/billable/effectiveInput 같은 식별 정보를 밀어낸다. 그래서 Router table은 `chosen/harness/model/provider/local/billable/effectiveInput`만 보여주고, 현재 계획의 조건은 `panel-note`에 `intent: no-billable`, `estimated input`, `selected <harness> <model>`로, 선택 행의 판단 근거는 `panel-detail`의 `why`/`risks` 2줄로 별도 표시한다.
-
-또 행을 고른 뒤 `t`/`E`를 누르면 그 행이 실행될 것이라는 기대가 자연스럽다. 이전 구현은 row highlight를 실행 intent에 반영하지 않고 새 modal 입력으로 재계획했기 때문에 오해 가능성이 컸다. 현재는 highlighted route와 RowSelected(마우스 클릭/Enter)를 같은 `_select_router_row` 경로에 연결하고, 그 route를 `preferred-harness`/`preferred-model`로 modal 기본값에 넣어 `p`/`v`/`t`/`E`가 모두 같은 선택 의미를 공유한다. `test_router_panel_renders_default_plan_candidates`는 `Score`/`Reasons`/`Risks` 컬럼 부재와 intent/detail note를, `test_router_row_selection_seeds_execute_intent`는 선택 row가 dry-run argv로 흘러가는 것을, `test_router_row_mouse_click_updates_detail_and_intent`는 실제 DataTable 클릭이 detail과 intent를 갱신하는 것을 고정한다.
-
-**결정: command palette는 `:` 하나만 남기고, raw Router commands는 제외한다.** [실증, 2026-06-29]
-
-Palette는 discovery/escape hatch로는 유용하지만, Router에는 이미 typed modal이 있다. Raw `router plan/explain/execute`를 palette에 남기면 prompt/stdin, billable intent, row selection 의미가 분산되고, 사람이 기대하는 "선택한 row를 실행" 모델과 충돌한다. 따라서 Router는 Router 패널 action(`p`/`v`/`t`/`E`)이 정본이고, palette registry는 router group을 제외한다. `ctrl+p` alias도 제거했다. Textual 내장 command palette와의 충돌 회피 때문에 `ENABLE_COMMAND_PALETTE=False`는 유지하되, 실제 사용자 단축키는 `:`만 문서화한다. Results log도 초기에는 접어 두고, `_write_result`/`_run_argv`가 실제 출력이 생길 때만 펼친다. 이 변경의 원칙은 기능을 숨기는 것이 아니라, 이유를 설명할 수 없는 표면을 줄이는 것이다.
-
-> **반론**: ① read/act 분리는 *구조적*으로 안전하나, ConfirmModal의 Cancel-우선이 막는 건 "오발"이지 "악의"가 아니다 — 자동 갱신이 read-only라는 보장은 client.py에 mutate 메서드가 없다는 사실에 의존하므로, 누군가 client에 실행 메서드를 추가하면 그 불변식이 코드 리뷰에서만 지켜진다(테스트가 "auto-refresh는 mutate 안 함"을 직접 단언하는지는 미확인 — 의심되면 추가하라). ② `run_test` 검증은 *우리 렌더 로직*을 친다 — 실제 터미널의 폰트·색·리사이즈 깨짐은 잡지 못한다(SVG 스냅샷이라면 잡았을 부류). UX 리뷰어 점검이 그 갭을 사람 눈으로 메웠으나, 그건 회귀 가드가 아니라 1회성이다. ③ 패키지 소유 venv는 textual 버전을 핀하지 않으면 드리프트한다 — 테스트가 `textual 8.2.7`의 `.content` API에 주석으로 의존(`test_app.py` L271)하므로, textual 메이저 업그레이드는 재검증 대상이다.
+원래 명제는 **"TUI는 CLI의 *관측*이지 CLI 로직의 *재구현*이 아니다"**였다. [기록] 그러나 TUI가 실제로 노렸던 원목적(모델 카탈로그 관리)은 달성하지 못한 채 read-only 관측 + router 실행 front-end로만 남았고, 관측 역할은 기존 read 표면을 그대로 합성하는 `ai-litellm status`(+`--json`)가 대신한다. 상세 설계·모듈·안전 분류·테스트는 git 히스토리(87d88f0 이전 커밋)에 보존되어 있다.
 
 ---
 
@@ -257,7 +223,6 @@ Palette는 discovery/escape hatch로는 유용하지만, Router에는 이미 typ
 | 양 오버레이의 defaultMode=default **렌더 기본값** (라이브 오버레이의 운영자 상향은 사양임 — §2) | ✅ check (06-12 추가; throwaway HOME의 신규 렌더만 검사) |
 | symlink 존재·대상·`~/.claude` 비생성·멱등 | ✅ check |
 | 예약 수치(221950/3277) 고정 + 예산 공식 5중 구현 lockstep — §4a | ✅ check (수치 고정 + `verify_budget_consistency.py` 차분 테스트가 5사본을 라이브 슬라이스해 정합 단언) |
-| 대시보드 회귀(read-only 패널·액션 안전 분류) — §6a | ✅ CI `dash-tests` 잡 (venv+textual 프로비저닝, `run_test` 파일럿 테스트 일체; check.zsh는 venv 부재 시 skip) |
 | gateway 정책 enabled=true | ✅ doctor ("must stay true") |
 | codex 카탈로그 신선도 | ✅ doctor limit-sync |
 | dedup(빈 출력 단언 — 네이밍 변경에 면역) | ✅ check (06-12 수정: 종전 단언은 옛 이름을 검사해 무효였음) |
