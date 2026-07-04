@@ -24,8 +24,7 @@
       "type": "string",
       "enum": [
         "claude-code",
-        "codex-cli",
-        "opencode-cli"
+        "codex-cli"
       ]
     },
     "command": {

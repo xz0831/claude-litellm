@@ -817,14 +817,6 @@ switch (descriptor.adapter) {
     requirePositiveInteger(adapterConfig.outputReservation || {}, "minimumInput", "adapterConfig.outputReservation");
     requireStringArray(adapterConfig, "subcommands", "adapterConfig");
     break;
-  case "opencode-cli":
-    for (const key of ["home", "config", "configDir"]) requireString(paths, key, "paths");
-    requireString(provider, "name", "provider");
-    requireString(provider, "baseUrl", "provider");
-    requireString(auth, "env", "provider.auth");
-    requireString(models, "default", "models");
-    requireString(adapterConfig, "providerNpm", "adapterConfig");
-    break;
 }
 
 if (errors.length) {
@@ -1316,145 +1308,6 @@ ai_litellm_harness_parse_model_selection() {
   }
 }
 
-ai_litellm_render_opencode_config() {
-  local harness="$1"
-  local descriptor config_path config_dir
-  descriptor="$(ai_litellm_harness_descriptor "$harness")" || return 1
-  config_path="$(ai_litellm_harness_json "$harness" paths.config)" || return 1
-  config_dir="$(ai_litellm_harness_json "$harness" paths.configDir)" || return 1
-  ai_litellm_assert_rendered_path "$config_path" "harness config" || return $?
-  ai_litellm_assert_rendered_path "$config_dir" "harness config dir" || return $?
-  mkdir -p "${config_path:h}" "$config_dir"
-
-  ai_litellm_ruby -rjson -ryaml -e '
-descriptor = JSON.parse(File.read(ARGV[0]))
-registry = (YAML.load_file(ARGV[1], aliases: true) rescue YAML.load_file(ARGV[1]))
-api_base = ARGV[2]
-config_path = ARGV[3]
-provider = descriptor["provider"] || {}
-adapter = descriptor["adapterConfig"] || {}
-models_config = descriptor["models"] || {}
-provider_name = provider["name"] || "litellm"
-entries = Array(registry["model_list"])
-routes = entries.map { |entry| entry["model_name"] }.compact
-# Derive per-model context/output limits from the single source (model_info).
-# OpenCode otherwise defaults to a 32000 max_tokens ceiling and truncates.
-model_entries = entries.each_with_object({}) do |entry, acc|
-  name = entry["model_name"]
-  next unless name
-  model = {"name" => name}
-  mi = entry["model_info"] || {}
-  if mi["max_input_tokens"]
-    model["limit"] = {
-      "context" => mi["max_input_tokens"],
-      "output" => mi["max_output_tokens"] || 4096
-    }
-  end
-  acc[name] = model
-end
-config = {
-  "$schema" => "https://opencode.ai/config.json",
-  "model" => "#{provider_name}/#{models_config["default"]}",
-  "provider" => {
-    provider_name => {
-      "npm" => adapter["providerNpm"] || "@ai-sdk/openai-compatible",
-      "name" => provider["displayName"] || provider_name,
-      "options" => {
-        "baseURL" => api_base,
-        "apiKey" => "{env:#{provider.dig("auth", "env") || "LITELLM_MASTER_KEY"}}"
-      },
-      "models" => model_entries
-    }
-  }
-}
-if models_config["small"]
-  config["small_model"] = "#{provider_name}/#{models_config["small"]}"
-end
-if adapter["disabledProviders"]
-  config["disabled_providers"] = adapter["disabledProviders"]
-end
-if adapter["enabledProviders"]
-  config["enabled_providers"] = adapter["enabledProviders"]
-end
-tmp = "#{config_path}.tmp.#{$$}"
-File.open(tmp, File::WRONLY | File::CREAT | File::TRUNC, 0600) do |file|
-  file.write(JSON.pretty_generate(config) + "\n")
-end
-File.rename(tmp, config_path)
-' "$descriptor" "$AI_LITELLM_CONFIG" "$(ai_litellm_api_base_url)" "$config_path"
-}
-
-ai_litellm_launch_opencode() {
-  local harness="$1"
-  shift
-
-  local -a args opencode_args env_assignments
-  args=("$@")
-  ai_litellm_harness_parse_model_selection "$harness" "${args[@]}" || return $?
-  local model="$AI_LITELLM_SELECTED_MODEL"
-  local explicit="$AI_LITELLM_SELECTED_MODEL_EXPLICIT"
-  if (( AI_LITELLM_SELECTED_MODEL_CONSUMED )); then
-    args=("${args[@]:1}")
-  fi
-
-  ai_litellm_model_runtime_ready "$model" || return $?
-  ai_litellm_start >/dev/null || return $?
-  ai_litellm_render_opencode_config "$harness" || return $?
-
-  opencode_args=("${args[@]}")
-  if [[ "$explicit" == "1" ]]; then
-    local provider_name
-    provider_name="$(ai_litellm_harness_json "$harness" provider.name 2>/dev/null || printf 'litellm')"
-    if [[ "${opencode_args[1]:-}" == "run" ]]; then
-      opencode_args=(run --model "$provider_name/$model" "${opencode_args[@]:1}")
-    else
-      opencode_args=(--model "$provider_name/$model" "${opencode_args[@]}")
-    fi
-  fi
-
-  local harness_effort
-  harness_effort="$(ai_litellm_harness_json "$harness" adapterConfig.reasoning.effort 2>/dev/null || true)"
-  if [[ "${opencode_args[1]:-}" == "run" && -n "$harness_effort" && "$harness_effort" != "auto" && "$harness_effort" != "none" ]]; then
-    if ! ai_litellm_cli_arg_present --variant "${opencode_args[@]}"; then
-      opencode_args=(run --variant "$harness_effort" "${opencode_args[@]:1}")
-    fi
-  fi
-
-  local auth_env auth_source auth_secret isolation_env config_env config_dir_env config_path config_dir command
-  auth_env="$(ai_litellm_harness_json "$harness" provider.auth.env 2>/dev/null || true)"
-  auth_source="$(ai_litellm_harness_json "$harness" provider.auth.source 2>/dev/null || true)"
-  if [[ -n "$auth_env" && -n "$auth_source" && "$auth_source" != "none" ]]; then
-    auth_secret="$(ai_litellm_harness_secret_value "$auth_source")" || return $?
-    env_assignments+=("$auth_env=$auth_secret")
-  fi
-
-  local key value
-  while IFS=$'\t' read -r key value; do
-    [[ -n "$key" ]] && env_assignments+=("$key=$value")
-  done < <(ai_litellm_harness_env_assignments "$harness" "$model")
-
-  isolation_env="$(ai_litellm_harness_json "$harness" isolation.env 2>/dev/null || printf 'OPENCODE_CONFIG')"
-  config_path="$(ai_litellm_harness_json "$harness" paths.config)"
-  config_dir="$(ai_litellm_harness_json "$harness" paths.configDir)"
-  config_env="$(ai_litellm_harness_json "$harness" adapterConfig.configEnv 2>/dev/null || printf "$isolation_env")"
-  config_dir_env="$(ai_litellm_harness_json "$harness" adapterConfig.configDirEnv 2>/dev/null || printf 'OPENCODE_CONFIG_DIR')"
-  env_assignments+=("$config_env=$config_path" "$config_dir_env=$config_dir" "OPENCODE_DISABLE_AUTOUPDATE=true")
-
-  local data_home cache_home state_home xdg_data_env xdg_cache_env xdg_state_env
-  data_home="$(ai_litellm_harness_json "$harness" paths.dataHome 2>/dev/null || true)"
-  cache_home="$(ai_litellm_harness_json "$harness" paths.cacheHome 2>/dev/null || true)"
-  state_home="$(ai_litellm_harness_json "$harness" paths.stateHome 2>/dev/null || true)"
-  xdg_data_env="$(ai_litellm_harness_json "$harness" adapterConfig.xdgDataEnv 2>/dev/null || printf 'XDG_DATA_HOME')"
-  xdg_cache_env="$(ai_litellm_harness_json "$harness" adapterConfig.xdgCacheEnv 2>/dev/null || printf 'XDG_CACHE_HOME')"
-  xdg_state_env="$(ai_litellm_harness_json "$harness" adapterConfig.xdgStateEnv 2>/dev/null || printf 'XDG_STATE_HOME')"
-  [[ -n "$data_home" ]] && { ai_litellm_assert_rendered_path "$data_home" "harness data home" || return $?; mkdir -p "$data_home"; env_assignments+=("$xdg_data_env=$data_home"); }
-  [[ -n "$cache_home" ]] && { ai_litellm_assert_rendered_path "$cache_home" "harness cache home" || return $?; mkdir -p "$cache_home"; env_assignments+=("$xdg_cache_env=$cache_home"); }
-  [[ -n "$state_home" ]] && { ai_litellm_assert_rendered_path "$state_home" "harness state home" || return $?; mkdir -p "$state_home"; env_assignments+=("$xdg_state_env=$state_home"); }
-
-  command="$(ai_litellm_harness_json "$harness" command)" || return 1
-  ai_litellm_harness_exec_env "$harness" "${env_assignments[@]}" -- "$command" "${opencode_args[@]}"
-}
-
 ai_litellm_launch() {
   local harness="$1"
   [[ -n "$harness" ]] || {
@@ -1474,9 +1327,6 @@ ai_litellm_launch() {
       ;;
     codex-cli)
       CODEX_LITELLM_HARNESS="$harness" "$AI_LITELLM_BIN_DIR/codex-litellm" "$@"
-      ;;
-    opencode-cli)
-      ai_litellm_launch_opencode "$harness" "$@"
       ;;
     *)
       echo "Unsupported harness adapter: $adapter" >&2
@@ -2720,15 +2570,6 @@ ai_litellm_doctor_codex_config_base_url() {
   [[ "$configured" == "$(ai_litellm_api_base_url)" ]]
 }
 
-ai_litellm_doctor_opencode_config_base_url() {
-  local config provider_name
-  config="$(ai_litellm_harness_json opencode paths.config 2>/dev/null)" || return 0
-  [[ -f "$config" ]] || return 0
-  provider_name="$(ai_litellm_harness_json opencode provider.name 2>/dev/null || printf 'litellm')"
-  jq -e --arg provider "$provider_name" --arg api_base "$(ai_litellm_api_base_url)" \
-    '.provider[$provider].options.baseURL == $api_base' "$config" >/dev/null
-}
-
 ai_litellm_doctor_limit_sync() {
   local raw_map codex_map
   raw_map="$(ai_litellm_limits_map 2>/dev/null)" || return 0
@@ -2755,31 +2596,6 @@ if (bad.length) console.log(bad.join(" "));
 ' "$codex_map" "$catalog" 2>/dev/null)"
     if [[ -n "$mismatch" ]]; then
       echo "stale Codex catalog safe context_window: $mismatch (run: ai-litellm sync)" >&2
-      failed=1
-    fi
-  fi
-
-  local opencode_config provider_name
-  opencode_config="$(ai_litellm_harness_json opencode paths.config 2>/dev/null || true)"
-  if [[ -n "$opencode_config" && -f "$opencode_config" ]]; then
-    provider_name="$(ai_litellm_harness_json opencode provider.name 2>/dev/null || printf 'litellm')"
-    mismatch="$(node -e '
-const fs = require("fs");
-const map = JSON.parse(process.argv[1]);
-const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const prov = process.argv[3];
-const models = (cfg.provider && cfg.provider[prov] && cfg.provider[prov].models) || {};
-const bad = [];
-for (const [name, m] of Object.entries(models)) {
-  const want = map[name];
-  if (want == null) continue;
-  const have = m.limit && m.limit.context;
-  if (have !== want) bad.push(`${name}(${have}!=${want})`);
-}
-if (bad.length) console.log(bad.join(" "));
-' "$raw_map" "$opencode_config" "$provider_name" 2>/dev/null)"
-    if [[ -n "$mismatch" ]]; then
-      echo "stale OpenCode config context: $mismatch (run: ai-litellm sync)" >&2
       failed=1
     fi
   fi
@@ -3194,13 +3010,6 @@ ai_litellm_sync() {
     fi
   fi
 
-  if ai_litellm_harness_descriptor opencode >/dev/null 2>&1; then
-    echo "- opencode config"
-    if (( ! dry_run )); then
-      ai_litellm_render_opencode_config opencode || failed=1
-    fi
-  fi
-
   if (( restart )); then
     echo "- proxy restart (reloads model_info + enforcement)"
     ai_litellm_restart || failed=1
@@ -3359,7 +3168,6 @@ ai_litellm_doctor() {
   ai_litellm_doctor_check "ai-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/ai-litellm" || failed=1
   ai_litellm_doctor_check "claude-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/claude-litellm" || failed=1
   ai_litellm_doctor_check "codex-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/codex-litellm" || failed=1
-  ai_litellm_doctor_check "opencode-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/opencode-litellm" || failed=1
   ai_litellm_doctor_check "litellm command available" ai_litellm_quiet command -v litellm || failed=1
   ai_litellm_doctor_check "node command available" ai_litellm_quiet command -v node || failed=1
   ai_litellm_doctor_check "curl command available" ai_litellm_quiet command -v curl || failed=1
@@ -3380,7 +3188,6 @@ ai_litellm_doctor() {
   ai_litellm_doctor_check "LiteLLM master key available" ai_litellm_quiet ai_litellm_master_key || failed=1
   ai_litellm_doctor_harnesses || failed=1
   ai_litellm_doctor_check "Codex generated config follows ai-litellm base URL" ai_litellm_doctor_codex_config_base_url || failed=1
-  ai_litellm_doctor_check "OpenCode generated config follows ai-litellm base URL" ai_litellm_doctor_opencode_config_base_url || failed=1
   ai_litellm_doctor_check "Codex shortcuts do not shadow subcommands" ai_litellm_doctor_shortcuts || failed=1
   ai_litellm_doctor_check "local model routes are unique" ai_litellm_doctor_local_route_uniqueness || failed=1
   ai_litellm_doctor_check "gateway output clamp policy valid" ai_litellm_context_gateway_clamp_policy_ok || failed=1
@@ -4371,11 +4178,6 @@ descriptor_paths(harness_dir).each do |path|
       seen.add(key)
       add_row(rows, harness, selection, model, descriptor, registry)
     end
-  when "opencode-cli"
-    default = descriptor.dig("models", "default")
-    add_row(rows, harness, "default(#{default})", default, descriptor, registry) if default
-    small = descriptor.dig("models", "small")
-    add_row(rows, harness, "small(#{small})", small, descriptor, registry) if small
   else
     default = descriptor.dig("models", "default")
     add_row(rows, harness, "default(#{default})", default, descriptor, registry) if default
@@ -4481,24 +4283,7 @@ const adapterReasoning = {
         confidence: "configured"
       };
     }
-  },
-  "opencode-cli": {
-    allowed: ["auto", "none", "minimal", "low", "medium", "high", "max"],
-    unsetEffort: "none",
-    build(value) {
-      if (value === "auto" || value === "none") return noHarnessControl();
-      return {
-        control: "intent",
-        source: "opencode-variant",
-        effort: value,
-        wire: "run-cli-flag:--variant",
-        flag: "--variant",
-        scope: "run",
-        confidence: "configured",
-        notes: "Applied to opencode run; user-provided --variant overrides this descriptor default."
-      };
-    }
-  },
+  }
 };
 
 if (!adapterReasoning[adapter]) fail(`Unsupported harness adapter for reasoning mutation: ${adapter}`);
@@ -5369,7 +5154,7 @@ ai_litellm_context_probe() {
       echo "Local state: API-key lane is not active unless $HOME/.codex/auth.json auth_mode is api-key."
       [[ -f "$HOME/.codex/auth.json" ]] && jq '{auth_mode, has_api_key:(.OPENAI_API_KEY!=null and .OPENAI_API_KEY!=""), has_tokens:(.tokens!=null)}' "$HOME/.codex/auth.json"
       ;;
-    codex-litellm|claude-litellm|opencode-litellm)
+    codex-litellm|claude-litellm)
       ai_litellm_context_probe_litellm_surface "$surface"
       ;;
     claude-code-native)
@@ -5731,27 +5516,6 @@ end
 ' "$AI_LITELLM_CONFIG" "$AI_LITELLM_HARNESSES_DIR"
 }
 
-ai_litellm_context_warn_opencode_output_cap() {
-  local config
-  config="$(ai_litellm_harness_json opencode paths.config 2>/dev/null || true)"
-  [[ -n "$config" && -f "$config" ]] || return 0
-  ai_litellm_harness_json opencode adapterConfig.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX >/dev/null 2>&1 && return 0
-  node -e '
-const fs = require("fs");
-const cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const provider = process.argv[2] || "litellm";
-const models = cfg.provider?.[provider]?.models || {};
-const high = Object.entries(models)
-  .filter(([, m]) => Number(m.limit?.output || 0) > 32000)
-  .map(([name, m]) => `${name}:${m.limit.output}`);
-if (high.length && !process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX) {
-  console.log(`OpenCode outputs above 32000 may be clamped unless OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX is set: ${high.join(", ")}`);
-}
-' "$config" "$(ai_litellm_harness_json opencode provider.name 2>/dev/null || printf 'litellm')" | while IFS= read -r line; do
-    [[ -n "$line" ]] && ai_litellm_context_doctor_warn "$line"
-  done
-}
-
 ai_litellm_context_warn_omlx_policy_cap() {
   ai_litellm_ruby -rjson -ryaml -e '
 settings_path, config_path = ARGV
@@ -5889,7 +5653,6 @@ ai_litellm_context_doctor() {
   ai_litellm_context_doctor_check "harness configs match single-source limits" ai_litellm_doctor_limit_sync || failed=1
   ai_litellm_context_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
   ai_litellm_context_doctor_check "context matrix renders" ai_litellm_quiet ai_litellm_context_matrix || failed=1
-  ai_litellm_context_warn_opencode_output_cap
   ai_litellm_context_warn_omlx_policy_cap
   ai_litellm_context_warn_glm_output_source
   ai_litellm_context_warn_provider_capability_drift
@@ -6259,7 +6022,7 @@ Usage: ai-litellm <group> <verb> [args]
 
 Reasoning effort values (not a command — pass to reasoning/harness set):
   OpenRouter none|minimal|low|medium|high|xhigh   Claude auto|low|medium|high|xhigh|max
-  Codex low|medium|high|xhigh   OpenCode auto|none|minimal|low|medium|high|max
+  Codex low|medium|high|xhigh
 
 Flat forms (start, stop, status, route-info, harnesses, launch, ...) still work but
 are deprecated in favor of the groups above.

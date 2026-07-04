@@ -24,7 +24,7 @@
 ### Task 1: 브랜치 생성 + check.zsh 기대값 뒤집기 (RED)
 
 **Files:**
-- Modify: `scripts/check.zsh:117`, `:121`, `:209`, `:614-617`, `:650`, `:665`
+- Modify: `scripts/check.zsh:117`, `:121`, `:209`, `:614,617`, `:650`, `:665`
 
 **Interfaces:**
 - Produces: opencode-free 세계를 단언하는 check.zsh — Task 5의 green 게이트가 이 기대값으로 판정된다.
@@ -58,7 +58,7 @@ L121 new: ai_litellm_assert_rendered_path "$prefix/state/codex-litellm" "test"
 
 - [ ] **Step 4: opencode 렌더·권한 블록 삭제 (L614-617)**
 
-`ai_litellm_render_opencode_config opencode` 호출과 그 뒤 `stat -f %Lp "$prefix/state/opencode-litellm/opencode.json"` 퍼미션 단언(= "600" 비교)을 포함한 블록 전체를 삭제한다.
+`ai_litellm_render_opencode_config opencode` 호출(L614)과 `stat -f %Lp "$prefix/state/opencode-litellm/opencode.json"` 퍼미션 단언(L617, = "600" 비교) 2줄만 삭제한다. 사이의 `$prefix/state`/`$prefix/state/ai-litellm` 700 퍼미션 단언 2줄(L615-616)은 opencode와 무관한 일반 불변식이므로 **유지한다**.
 
 - [ ] **Step 5: harness 루프 축소 (L650) + sync 출력 단언 삭제 (L665)**
 

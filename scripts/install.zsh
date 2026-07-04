@@ -20,7 +20,6 @@ Global shims:
   ~/.local/bin/ai-litellm
   ~/.local/bin/claude-litellm
   ~/.local/bin/codex-litellm
-  ~/.local/bin/opencode-litellm
   ~/.local/bin/openrouter-key-status
   ~/.local/bin/litellm-master-key-status
 
@@ -294,7 +293,6 @@ for file in \
   "$repo_root/config/ai-litellm/harnesses/schema.json" \
   "$repo_root/config/ai-litellm/harnesses/claude.json" \
   "$repo_root/config/ai-litellm/harnesses/codex.json" \
-  "$repo_root/config/ai-litellm/harnesses/opencode.json" \
   "$repo_root/config/claude-litellm/settings.json" \
   "$repo_root/config/claude-litellm/shell.zsh" \
   "$repo_root/config/codex-litellm/settings.json" \
@@ -304,7 +302,7 @@ for file in \
   require_file "$file"
 done
 
-for script in ai-litellm claude-litellm codex-litellm opencode-litellm openrouter-key-status litellm-master-key-status fabric; do
+for script in ai-litellm claude-litellm codex-litellm openrouter-key-status litellm-master-key-status fabric; do
   require_file "$repo_root/bin/$script"
 done
 
@@ -325,8 +323,7 @@ for dir in \
   "$prefix/scripts" \
   "$prefix/state/ai-litellm" \
   "$prefix/state/claude-litellm/claude-config" \
-  "$prefix/state/codex-litellm/codex-home" \
-  "$prefix/state/opencode-litellm"; do
+  "$prefix/state/codex-litellm/codex-home"; do
   run mkdir -p "$dir"
 done
 
@@ -336,8 +333,7 @@ for dir in \
   "$prefix/state/claude-litellm" \
   "$prefix/state/claude-litellm/claude-config" \
   "$prefix/state/codex-litellm" \
-  "$prefix/state/codex-litellm/codex-home" \
-  "$prefix/state/opencode-litellm"; do
+  "$prefix/state/codex-litellm/codex-home"; do
   if (( dry_run )) || [[ -d "$dir" ]]; then
     run chmod 700 "$dir"
   fi
@@ -353,6 +349,17 @@ remove_retired_goose_support() {
   run rm -rf "$prefix/state/goose-litellm"
 }
 remove_retired_goose_support
+
+remove_retired_opencode_support() {
+  run rm -f "$bin_dir/opencode-litellm"
+  for backup in "$bin_dir/opencode-litellm".bak.*(N); do
+    run rm -f "$backup"
+  done
+  run rm -f "$prefix/bin/opencode-litellm"
+  run rm -f "$prefix/config/ai-litellm/harnesses/opencode.json"
+  run rm -rf "$prefix/state/opencode-litellm"
+}
+remove_retired_opencode_support
 
 install_rendered "$repo_root/config/litellm_config.yaml" "$prefix/config/litellm_config.yaml"
 install_rendered "$repo_root/config/ai_litellm_callbacks/__init__.py" "$prefix/config/ai_litellm_callbacks/__init__.py"
@@ -406,7 +413,7 @@ install_rendered "$repo_root/config/codex-litellm/shell.zsh" "$prefix/config/cod
 install_rendered "$repo_root/docs/AI_AGENT_LITELLM_ARCHITECTURE.md" "$prefix/docs/AI_AGENT_LITELLM_ARCHITECTURE.md"
 install_executable "$repo_root/scripts/uninstall.zsh" "$prefix/scripts/uninstall.zsh"
 
-for script in ai-litellm claude-litellm codex-litellm opencode-litellm openrouter-key-status litellm-master-key-status fabric; do
+for script in ai-litellm claude-litellm codex-litellm openrouter-key-status litellm-master-key-status fabric; do
   install_executable "$repo_root/bin/$script" "$prefix/bin/$script"
   install_shim "$script"
 done
