@@ -1,4 +1,4 @@
-"""LiteLLM proxy callbacks for ai-litellm-fabric."""
+"""LiteLLM proxy callbacks for ai-litellm."""
 
 from . import output_clamp
 

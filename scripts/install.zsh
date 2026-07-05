@@ -4,17 +4,17 @@ set -euo pipefail
 
 repo_root="${0:A:h:h}"
 dry_run=0
-prefix="${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}"
+prefix="${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm}"
 bin_dir="$HOME/.local/bin"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/install.zsh [--dry-run] [--prefix PATH] [--skip-preflight]
 
-Installs ai-litellm-fabric as one package directory plus global command shims.
+Installs ai-litellm as one package directory plus global command shims.
 
 Package directory:
-  ~/.local/share/ai-litellm-fabric
+  ~/.local/share/ai-litellm
 
 Global shims:
   ~/.local/bin/ai-litellm
@@ -96,7 +96,7 @@ preflight() {
 
   (( ${#missing[@]} == 0 )) && return 0
 
-  echo "Missing shared ai-litellm-fabric dependencies: ${missing[*]}" >&2
+  echo "Missing shared ai-litellm dependencies: ${missing[*]}" >&2
   echo "Install the missing commands before using the package." >&2
   echo "Typical macOS packages: brew install node jq ripgrep" >&2
   if (( dry_run )); then
@@ -120,12 +120,12 @@ install_rendered() {
   local dest="$2"
   run mkdir -p "${dest:h}"
   if (( dry_run )); then
-    log "dry-run render ${src} -> ${dest} (__HOME__=${HOME}, __FABRIC_HOME__=${prefix})"
+    log "dry-run render ${src} -> ${dest} (__HOME__=${HOME}, __AI_LITELLM_HOME__=${prefix})"
   else
     local tmp
     tmp="${dest}.tmp.$$"
     HOME_REPL="$HOME" FABRIC_HOME_REPL="$prefix" perl -pe \
-      's#__HOME__#$ENV{HOME_REPL}#g; s#__FABRIC_HOME__#$ENV{FABRIC_HOME_REPL}#g' \
+      's#__HOME__#$ENV{HOME_REPL}#g; s#__AI_LITELLM_HOME__#$ENV{FABRIC_HOME_REPL}#g' \
       "$src" > "$tmp"
     if [[ -e "$dest" || -L "$dest" ]]; then
       if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
@@ -162,8 +162,8 @@ install_shim() {
     tmp="${dest}.tmp.$$"
     {
       print -r -- '#!/usr/bin/env zsh'
-      print -r -- "export AI_LITELLM_FABRIC_HOME=${(qq)prefix}"
-      print -r -- 'exec "$AI_LITELLM_FABRIC_HOME/bin/'"$name"'" "$@"'
+      print -r -- "export AI_LITELLM_HOME=${(qq)prefix}"
+      print -r -- 'exec "$AI_LITELLM_HOME/bin/'"$name"'" "$@"'
     } > "$tmp"
     if [[ -e "$dest" || -L "$dest" ]]; then
       if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
@@ -306,7 +306,7 @@ done
 
 (( skip_preflight )) || preflight
 
-log "Installing ai-litellm-fabric from $repo_root"
+log "Installing ai-litellm from $repo_root"
 log "Package: $prefix"
 log "Command shims: $bin_dir"
 (( dry_run )) && log "Dry run: no files will be changed"
@@ -406,7 +406,7 @@ done
 
 ensure_litellm_master_key
 
-log "Installed ai-litellm-fabric package."
+log "Installed ai-litellm package."
 log "Delete with:"
 log "  ai-litellm uninstall"
 log "  ${(q)prefix}/scripts/uninstall.zsh --prefix ${(q)prefix}"

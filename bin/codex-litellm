@@ -6,8 +6,8 @@ if [[ -s "$NVM_DIR/nvm.sh" ]]; then
 fi
 
 _ai_litellm_resolve_fabric_home() {
-  if [[ -n "${AI_LITELLM_FABRIC_HOME:-}" ]]; then
-    print -r -- "$AI_LITELLM_FABRIC_HOME"
+  if [[ -n "${AI_LITELLM_HOME:-}" ]]; then
+    print -r -- "$AI_LITELLM_HOME"
     return
   fi
   local script_dir="${0:A:h}"
@@ -15,19 +15,19 @@ _ai_litellm_resolve_fabric_home() {
     print -r -- "${script_dir:h}"
     return
   fi
-  print -r -- "${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric"
+  print -r -- "${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm"
 }
 
-export AI_LITELLM_FABRIC_HOME="$(_ai_litellm_resolve_fabric_home)"
+export AI_LITELLM_HOME="$(_ai_litellm_resolve_fabric_home)"
 
-if [[ -f "$AI_LITELLM_FABRIC_HOME/config/ai-litellm/lib.zsh" ]]; then
-  source "$AI_LITELLM_FABRIC_HOME/config/ai-litellm/lib.zsh"
+if [[ -f "$AI_LITELLM_HOME/config/ai-litellm/lib.zsh" ]]; then
+  source "$AI_LITELLM_HOME/config/ai-litellm/lib.zsh"
 elif [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
   source "$HOME/.config/ai-litellm/lib.zsh"
 fi
 
-if [[ -f "$AI_LITELLM_FABRIC_HOME/config/codex-litellm/shell.zsh" ]]; then
-  source "$AI_LITELLM_FABRIC_HOME/config/codex-litellm/shell.zsh"
+if [[ -f "$AI_LITELLM_HOME/config/codex-litellm/shell.zsh" ]]; then
+  source "$AI_LITELLM_HOME/config/codex-litellm/shell.zsh"
 elif [[ -f "$HOME/.config/codex-litellm/shell.zsh" ]]; then
   source "$HOME/.config/codex-litellm/shell.zsh"
 fi

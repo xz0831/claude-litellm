@@ -5,11 +5,11 @@
   "adapter": "codex-cli",
   "command": "codex",
   "paths": {
-    "home": "__FABRIC_HOME__/state/codex-litellm",
-    "settings": "__FABRIC_HOME__/config/codex-litellm/settings.json",
-    "codexHome": "__FABRIC_HOME__/state/codex-litellm/codex-home",
-    "config": "__FABRIC_HOME__/state/codex-litellm/codex-home/config.toml",
-    "modelCatalog": "__FABRIC_HOME__/state/codex-litellm/model-catalog.json"
+    "home": "__AI_LITELLM_HOME__/state/codex-litellm",
+    "settings": "__AI_LITELLM_HOME__/config/codex-litellm/settings.json",
+    "codexHome": "__AI_LITELLM_HOME__/state/codex-litellm/codex-home",
+    "config": "__AI_LITELLM_HOME__/state/codex-litellm/codex-home/config.toml",
+    "modelCatalog": "__AI_LITELLM_HOME__/state/codex-litellm/model-catalog.json"
   },
   "isolation": {
     "kind": "env-dir-var",

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root="${0:A:h:h}"
-prefix="${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}"
+prefix="${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm}"
 bin_dir="$HOME/.local/bin"
 dry_run=0
 remove_legacy=0
@@ -13,7 +13,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/uninstall.zsh [--dry-run] [--prefix PATH] [--legacy] [--purge-keychain]
 
-Removes the ai-litellm-fabric package directory and global command shims.
+Removes the ai-litellm package directory and global command shims.
 Stops the shared LiteLLM proxy first so its state is not deleted out from
 under a live process.
 
@@ -23,7 +23,7 @@ removal commands are printed instead, since a provider key may be shared
 with other tools.
 
 Default removal:
-  - ~/.local/share/ai-litellm-fabric
+  - ~/.local/share/ai-litellm
   - ~/.local/bin/ai-litellm
   - ~/.local/bin/claude-litellm
   - ~/.local/bin/codex-litellm
@@ -142,14 +142,14 @@ handle_keychain() {
 }
 
 assert_fabric_prefix_safe() {
-  if [[ "${prefix:t}" != "ai-litellm-fabric" ]]; then
-    echo "Refusing to remove non ai-litellm-fabric prefix: $prefix" >&2
+  if [[ "${prefix:t}" != "ai-litellm" ]]; then
+    echo "Refusing to remove non ai-litellm prefix: $prefix" >&2
     echo "Pass the real package prefix, not a parent directory." >&2
     exit 1
   fi
 
   if [[ -e "$prefix" && ! -f "$prefix/config/ai-litellm/lib.zsh" ]]; then
-    echo "Refusing to remove prefix that does not look like an ai-litellm-fabric package: $prefix" >&2
+    echo "Refusing to remove prefix that does not look like an ai-litellm package: $prefix" >&2
     exit 1
   fi
 }
@@ -178,7 +178,7 @@ if (( remove_legacy )); then
     "$HOME/.config/opencode-litellm"
 fi
 
-print -r -- "Removed ai-litellm-fabric package/shims."
+print -r -- "Removed ai-litellm package/shims."
 if (( remove_legacy )); then
   print -r -- "Removed legacy spread-out wrapper paths."
 fi

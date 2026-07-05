@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-04
 
-이 문서는 ai-litellm(설치 패키지 디렉토리는 역사적 이름 `ai-litellm-fabric` 유지)의 모든 비자명한 설계 결정에 대해 **무엇을, 왜, 어떤 대안을 기각했고, 어디서 반박할 수 있는지**를 기록한다. 운영 절차는 `AI_AGENT_LITELLM_ARCHITECTURE.md`(정본 가이드)가, 경계 계약은 `README.md`가, 강제는 `scripts/check.zsh`와 doctor가 맡는다. 이 문서의 역할은 그 셋이 답하지 않는 단 하나의 질문 — "왜?" — 이다.
+이 문서는 ai-litellm(설치 경로·env·렌더 토큰이 모두 ai-litellm으로 통일됨)의 모든 비자명한 설계 결정에 대해 **무엇을, 왜, 어떤 대안을 기각했고, 어디서 반박할 수 있는지**를 기록한다. 운영 절차는 `AI_AGENT_LITELLM_ARCHITECTURE.md`(정본 가이드)가, 경계 계약은 `README.md`가, 강제는 `scripts/check.zsh`와 doctor가 맡는다. 이 문서의 역할은 그 셋이 답하지 않는 단 하나의 질문 — "왜?" — 이다.
 
 읽는 법:
 
@@ -204,7 +204,7 @@ claude/codex 두 현역 harness가 서로 다른 격리 전략을 쓰는 것은 
 
 ## 7. 설치/검증 철학
 
-**copy-and-render 패키지 (symlink 농장 금지)** [기록+재구성]: 네 가지가 겹친다 — ① JSON/TOML은 env 확장이 없어 절대 경로가 렌더 시점에 박혀야 한다(`__HOME__`/`__FABRIC_HOME__`), ② 패키지는 checkout 사후 생존해야 한다(uninstall.zsh를 패키지 안에 복사), ③ 설치본은 가변 런타임 상태다(`reasoning set`이 descriptor를 수정 — symlink면 git checkout에 쓰게 됨), ④ state가 prefix 안에 산다. 한때 repo 루트에 생기던 `__FABRIC_HOME__/` 디렉토리가 렌더 없이 checkout에서 wrapper를 실행하면 무슨 일이 나는지의 물증이었다(지금은 제거·gitignore했고 `ai_litellm_assert_rendered_path` 가드가 재발을 막는다 — 아래 §11). 멱등성+변경 시 백업(`cmp -s` 동일이면 무백업 — check가 "동일 재설치 시 백업 0"을 단언).
+**copy-and-render 패키지 (symlink 농장 금지)** [기록+재구성]: 네 가지가 겹친다 — ① JSON/TOML은 env 확장이 없어 절대 경로가 렌더 시점에 박혀야 한다(`__HOME__`/`__AI_LITELLM_HOME__`), ② 패키지는 checkout 사후 생존해야 한다(uninstall.zsh를 패키지 안에 복사), ③ 설치본은 가변 런타임 상태다(`reasoning set`이 descriptor를 수정 — symlink면 git checkout에 쓰게 됨), ④ state가 prefix 안에 산다. 한때 repo 루트에 생기던 `__AI_LITELLM_HOME__/` 디렉토리가 렌더 없이 checkout에서 wrapper를 실행하면 무슨 일이 나는지의 물증이었다(지금은 제거·gitignore했고 `ai_litellm_assert_rendered_path` 가드가 재발을 막는다 — 아래 §11). 멱등성+변경 시 백업(`cmp -s` 동일이면 무백업 — check가 "동일 재설치 시 백업 0"을 단언).
 
 **check.zsh = 집행 척추**: 일회용 mktemp HOME에 **진짜 설치**를 수행하고 마지막에 `~/.claude`/`~/.codex`가 생성되지 않았음을 단언한다 — 경계 계약을 개발자의 실제 native 설치를 위험에 빠뜨리지 않고 매 CI에서 검증. master key 소스를 의도적으로 눈멀게 해(LITELLM_MASTER_KEY= + 미스 보장 keychain 계정) 자동 생성 경로를 결정론적으로 태운다. stub claude 패턴: wrapper의 산출물은 자식 프로세스가 받는 env+argv 계약이므로, 그 계약 자체를 echo로 관측한다(네트워크/과금/실바이너리 불요). **`set -e` 사건**: 내부 `zsh -fc` 블록은 마지막 명령의 종료코드만 전파하므로, d1c4edd 이전의 모든 중간 단언은 조용히 무효였다 — 모든 green run이 보이는 것보다 적게 증명하고 있었다. 적대적 테스트: PWNED 주입(시크릿이 어느 층에서도 셸 평가되지 않음), 외부 pid 보호(pid 파일의 프로세스가 litellm이어야만 신뢰 — pid 재활용 시 무고한 프로세스 kill 방지), 공백 포함 prefix 전체 수명주기.
 
@@ -270,7 +270,7 @@ claude/codex 두 현역 harness가 서로 다른 격리 전략을 쓰는 것은 
 8. **deprecated alias 테이블에 일몰 기준이 없다** — 무해하나 영생할 것이다. **해결됨(2026-07-05)**: P4에서 일몰 기준을 "다음 command-surface 슬리밍 패스"로 확정하고 실행했다 — 13종 flat alias 전부, `claude-litellm`/`codex-litellm`의 launcher lifecycle flag(`--start/--stop/--restart/--logs/--doctor`, codex `--route-info`), `route`/`audit` 그룹, 최상위 `capabilities` 명령, per-group `doctor` 서브커맨드(`proxy doctor` 등)를 전부 제거했다(코드: 커밋 f8ab7a9; 문서: 아키텍처 가이드의 [2026-07-05 명령 표면 슬리밍 결정 로그](AI_AGENT_LITELLM_ARCHITECTURE.md) 참조). 남은 표면에는 더 이상 "deprecated이지만 영생하는" 항목이 없다 — 있는 것은 전부 정본이거나, 없다.
 9. **availabilityNux** — 의미는 상류 소스로 확정(모델 광고 툴팁의 표시 횟수 카운터, 상한 4). 값 3은 작성자의 라이브 카운터 복사로 추정되며 **기능적으로 틀려서**(3<4 + 매 런치 재렌더로 증분 소실 → 툴팁 매번 재출현) 4로 수정했다(06-12).
 10. **nvm 부트스트랩 비대칭** — 드리프트로 판정(npm 배포 CLI 시대의 잔재). PATH-최소 컨텍스트에서 opencode가 hard-fail하고 key-status가 **조용히 "키 없음"으로 오보고**하던 것을 shim 통일로 수정했다(06-12).
-11. **`__FABRIC_HOME__/` 리터럴 디렉토리 풋건 (해결)** — checkout에서 wrapper를 직접 실행하면 미렌더 경로에 상태를 쓰던 풋건. 이제 `ai_litellm_assert_rendered_path`가 descriptor 파생 mkdir(isolation home, Claude settings dir, shared-env dir) 직전에 해석된 경로의 placeholder를 잡아 loud-fail하고, `.gitignore`가 잔재를 가리며, check.zsh가 회귀를 단언한다. 가드의 마커는 install.zsh의 렌더가 가드 자신을 치환하지 못하도록 조각으로 조립한다.
+11. **`__AI_LITELLM_HOME__/` 리터럴 디렉토리 풋건 (해결)** — checkout에서 wrapper를 직접 실행하면 미렌더 경로에 상태를 쓰던 풋건. 이제 `ai_litellm_assert_rendered_path`가 descriptor 파생 mkdir(isolation home, Claude settings dir, shared-env dir) 직전에 해석된 경로의 placeholder를 잡아 loud-fail하고, `.gitignore`가 잔재를 가리며, check.zsh가 회귀를 단언한다. 가드의 마커는 install.zsh의 렌더가 가드 자신을 치환하지 못하도록 조각으로 조립한다.
 12. **관측의 무기한 표시** — 2026년의 lower bound가 2027년에도 신뢰를 빌려준다. 프로바이더 믹스가 유동적이 되면 타임스탬프 표시/노화를 고려하라.
 
 ---

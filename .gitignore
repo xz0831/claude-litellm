@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 
 # Runtime state. Installed packages keep state under
-# ${XDG_DATA_HOME:-~/.local/share}/ai-litellm-fabric/state; ~/.config/* paths
+# ${XDG_DATA_HOME:-~/.local/share}/ai-litellm/state; ~/.config/* paths
 # are legacy migration fallbacks only. Runtime state is not kept in this repo.
 *.log
 *.pid
@@ -24,9 +24,9 @@ claude-config/
 codex-home/
 
 # Un-rendered install placeholder. Running a bin/ wrapper from a checkout
-# (instead of the installed package) mkdir's literal __FABRIC_HOME__ paths
+# (instead of the installed package) mkdir's literal __AI_LITELLM_HOME__ paths
 # under cwd; ignore the artifact so it never surfaces in git or gets committed.
-__FABRIC_HOME__/
+__AI_LITELLM_HOME__/
 
 # Local scratch.
 .tmp/

@@ -2,10 +2,10 @@
 
 Portable harness fabric for local AI agent CLIs.
 
-(The installed package directory keeps its historical name
-`~/.local/share/ai-litellm-fabric`, and the `AI_LITELLM_FABRIC_HOME` env /
-`config/ai-litellm/` layout are unchanged — only the repository is named
-`ai-litellm`.)
+(The installed package directory, the `AI_LITELLM_HOME` env, and the
+`__AI_LITELLM_HOME__` render token are all unified to `ai-litellm`; only the
+internal `config/ai-litellm/` layout and `ai_litellm_*` function names are
+unchanged.)
 
 This repository manages the wrapper layer around local agent CLIs:
 
@@ -38,7 +38,7 @@ session state isolated per variant:
 The installed wrapper layer is one package directory plus thin global command
 shims:
 
-- package: `~/.local/share/ai-litellm-fabric`
+- package: `~/.local/share/ai-litellm`
 - commands: `~/.local/bin/*-litellm`
 
 Downloading the repository does not automatically create global commands. Run
@@ -68,12 +68,12 @@ Tracked source:
 
 Installed package/runtime state:
 
-- `~/.local/share/ai-litellm-fabric/config`: rendered wrapper config
-- `~/.local/share/ai-litellm-fabric/bin`: installed wrapper executables
-- `~/.local/share/ai-litellm-fabric/docs`: installed maintainer guide
-- `~/.local/share/ai-litellm-fabric/scripts`: installed package tools, including
+- `~/.local/share/ai-litellm/config`: rendered wrapper config
+- `~/.local/share/ai-litellm/bin`: installed wrapper executables
+- `~/.local/share/ai-litellm/docs`: installed maintainer guide
+- `~/.local/share/ai-litellm/scripts`: installed package tools, including
   uninstall
-- `~/.local/share/ai-litellm-fabric/state`: proxy logs, pid files, config
+- `~/.local/share/ai-litellm/state`: proxy logs, pid files, config
   hashes, harness sessions, sqlite databases, caches, generated configs, local
   private env file
 - `~/.local/bin`: global shims that point into the package
@@ -110,11 +110,11 @@ Install:
 The installer preflights shared dependencies, writes only the LiteLLM wrapper
 layer, and creates a local LiteLLM master key if one is not already available:
 
-- `~/.local/share/ai-litellm-fabric/config`
-- `~/.local/share/ai-litellm-fabric/bin`
-- `~/.local/share/ai-litellm-fabric/docs`
-- `~/.local/share/ai-litellm-fabric/scripts`
-- `~/.local/share/ai-litellm-fabric/state`
+- `~/.local/share/ai-litellm/config`
+- `~/.local/share/ai-litellm/bin`
+- `~/.local/share/ai-litellm/docs`
+- `~/.local/share/ai-litellm/scripts`
+- `~/.local/share/ai-litellm/state`
 - `~/.local/bin/ai-litellm`
 - `~/.local/bin/claude-litellm`
 - `~/.local/bin/codex-litellm`
@@ -133,7 +133,7 @@ ai-litellm uninstall
 The installed fallback is also self-contained:
 
 ```zsh
-~/.local/share/ai-litellm-fabric/scripts/uninstall.zsh
+~/.local/share/ai-litellm/scripts/uninstall.zsh
 ```
 
 If migrating from an older spread-out install, preview legacy cleanup first:

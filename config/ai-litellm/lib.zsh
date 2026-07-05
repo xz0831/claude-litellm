@@ -1,22 +1,22 @@
 # Shared LiteLLM proxy management for local agent wrappers.
 
-export AI_LITELLM_FABRIC_HOME="${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}"
-export AI_LITELLM_CONFIG_HOME="${AI_LITELLM_CONFIG_HOME:-$AI_LITELLM_FABRIC_HOME/config}"
-export AI_LITELLM_STATE_HOME="${AI_LITELLM_STATE_HOME:-$AI_LITELLM_FABRIC_HOME/state}"
-export AI_LITELLM_BIN_DIR="${AI_LITELLM_BIN_DIR:-$AI_LITELLM_FABRIC_HOME/bin}"
-export AI_LITELLM_HOME="${AI_LITELLM_HOME:-$AI_LITELLM_STATE_HOME/ai-litellm}"
+export AI_LITELLM_HOME="${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm}"
+export AI_LITELLM_CONFIG_HOME="${AI_LITELLM_CONFIG_HOME:-$AI_LITELLM_HOME/config}"
+export AI_LITELLM_STATE_HOME="${AI_LITELLM_STATE_HOME:-$AI_LITELLM_HOME/state}"
+export AI_LITELLM_BIN_DIR="${AI_LITELLM_BIN_DIR:-$AI_LITELLM_HOME/bin}"
+export AI_LITELLM_PROXY_HOME="${AI_LITELLM_PROXY_HOME:-$AI_LITELLM_STATE_HOME/ai-litellm}"
 export AI_LITELLM_CONFIG="${AI_LITELLM_CONFIG:-$AI_LITELLM_CONFIG_HOME/litellm_config.yaml}"
 export AI_LITELLM_SETTINGS="${AI_LITELLM_SETTINGS:-$AI_LITELLM_CONFIG_HOME/ai-litellm/settings.json}"
 export AI_LITELLM_HARNESSES_DIR="${AI_LITELLM_HARNESSES_DIR:-$AI_LITELLM_CONFIG_HOME/ai-litellm/harnesses}"
-export AI_LITELLM_ENV="${AI_LITELLM_ENV:-$AI_LITELLM_HOME/env}"
-export AI_LITELLM_PID_FILE="${AI_LITELLM_PID_FILE:-$AI_LITELLM_HOME/litellm.pid}"
-export AI_LITELLM_LOCK_DIR="${AI_LITELLM_LOCK_DIR:-$AI_LITELLM_HOME/litellm.lock}"
-export AI_LITELLM_LOG_FILE="${AI_LITELLM_LOG_FILE:-$AI_LITELLM_HOME/litellm.log}"
-export AI_LITELLM_CONFIG_HASH_FILE="${AI_LITELLM_CONFIG_HASH_FILE:-$AI_LITELLM_HOME/litellm.config.sha256}"
-export AI_LITELLM_STARTED_AT_FILE="${AI_LITELLM_STARTED_AT_FILE:-$AI_LITELLM_HOME/litellm.started_at}"
-export AI_LITELLM_REASONING_OBS_FILE="${AI_LITELLM_REASONING_OBS_FILE:-$AI_LITELLM_HOME/reasoning-observations.json}"
+export AI_LITELLM_ENV="${AI_LITELLM_ENV:-$AI_LITELLM_PROXY_HOME/env}"
+export AI_LITELLM_PID_FILE="${AI_LITELLM_PID_FILE:-$AI_LITELLM_PROXY_HOME/litellm.pid}"
+export AI_LITELLM_LOCK_DIR="${AI_LITELLM_LOCK_DIR:-$AI_LITELLM_PROXY_HOME/litellm.lock}"
+export AI_LITELLM_LOG_FILE="${AI_LITELLM_LOG_FILE:-$AI_LITELLM_PROXY_HOME/litellm.log}"
+export AI_LITELLM_CONFIG_HASH_FILE="${AI_LITELLM_CONFIG_HASH_FILE:-$AI_LITELLM_PROXY_HOME/litellm.config.sha256}"
+export AI_LITELLM_STARTED_AT_FILE="${AI_LITELLM_STARTED_AT_FILE:-$AI_LITELLM_PROXY_HOME/litellm.started_at}"
+export AI_LITELLM_REASONING_OBS_FILE="${AI_LITELLM_REASONING_OBS_FILE:-$AI_LITELLM_PROXY_HOME/reasoning-observations.json}"
 export AI_LITELLM_CONTEXT_OBS_SEED="${AI_LITELLM_CONTEXT_OBS_SEED:-$AI_LITELLM_CONFIG_HOME/ai-litellm/context-observations.json}"
-export AI_LITELLM_CONTEXT_OBS_FILE="${AI_LITELLM_CONTEXT_OBS_FILE:-$AI_LITELLM_HOME/context-observations.json}"
+export AI_LITELLM_CONTEXT_OBS_FILE="${AI_LITELLM_CONTEXT_OBS_FILE:-$AI_LITELLM_PROXY_HOME/context-observations.json}"
 export AI_LITELLM_LOCK_MAX_AGE_SECONDS="${AI_LITELLM_LOCK_MAX_AGE_SECONDS:-300}"
 export AI_LITELLM_LEGACY_ENV="${AI_LITELLM_LEGACY_ENV:-$HOME/.config/ai-litellm/env}"
 export AI_LITELLM_LEGACY_PID_FILE="${AI_LITELLM_LEGACY_PID_FILE:-$HOME/.config/ai-litellm/litellm.pid}"
@@ -167,8 +167,8 @@ ai_litellm_env_set_value() {
     return 1
   fi
 
-  mkdir -p "$AI_LITELLM_HOME"
-  chmod 700 "$AI_LITELLM_HOME"
+  mkdir -p "$AI_LITELLM_PROXY_HOME"
+  chmod 700 "$AI_LITELLM_PROXY_HOME"
   # Pass the secret to node via stdin, NOT as argv — argv is visible via `ps`.
   printf '%s' "$value" | node -e '
 const fs = require("fs");
@@ -661,7 +661,7 @@ ai_litellm_harness_alias_set() {
   local settings
   settings="$(ai_litellm_harness_json "$harness" paths.settings 2>/dev/null)" || { echo "No settings for harness: $harness" >&2; return 1; }
   # Defense-in-depth, matching the launch paths: refuse an un-rendered placeholder
-  # path (run-from-checkout footgun). The token is __FABRIC_HOME__, never __HOME__,
+  # path (run-from-checkout footgun). The token is __AI_LITELLM_HOME__, never __HOME__,
   # so this can never resolve to a native harness config.
   ai_litellm_assert_rendered_path "$settings" "harness settings" || return $?
   ai_litellm_ruby -rjson -ryaml -e '# encoding: utf-8
@@ -704,7 +704,7 @@ ai_litellm_harness_names() {
 }
 
 # Refuse to act on an un-rendered install placeholder. Harness descriptor paths
-# carry install tokens (HOME / FABRIC_HOME, each wrapped in double underscores)
+# carry install tokens (HOME / AI_LITELLM_HOME, each wrapped in double underscores)
 # that scripts/install.zsh renders at install time; running a bin/ wrapper
 # straight from a source checkout skips that rendering, so a literal placeholder
 # directory would be created under the current directory (the stray run-from-
@@ -717,7 +717,7 @@ ai_litellm_assert_rendered_path() {
   local path="$1" context="${2:-path}"
   local us="__" home_marker fabric_marker
   home_marker="${us}HOME${us}"
-  fabric_marker="${us}FABRIC_HOME${us}"
+  fabric_marker="${us}AI_LITELLM_HOME${us}"
   case "$path" in
   *"$fabric_marker"*|*"$home_marker"*)
     echo "ai-litellm: refusing to create un-rendered ${context}: ${path}" >&2
@@ -1667,7 +1667,7 @@ ai_litellm_config_hash() {
 }
 
 ai_litellm_record_proxy_config_state() {
-  mkdir -p "$AI_LITELLM_HOME"
+  mkdir -p "$AI_LITELLM_PROXY_HOME"
   ai_litellm_config_hash > "$AI_LITELLM_CONFIG_HASH_FILE" 2>/dev/null || true
   date -u '+%Y-%m-%dT%H:%M:%SZ' > "$AI_LITELLM_STARTED_AT_FILE"
 }
@@ -1722,7 +1722,7 @@ ai_litellm_clear_lock() {
 
 ai_litellm_acquire_lock() {
   local lock_wait
-  mkdir -p "$AI_LITELLM_HOME"
+  mkdir -p "$AI_LITELLM_PROXY_HOME"
   for lock_wait in {1..50}; do
     if mkdir "$AI_LITELLM_LOCK_DIR" 2>/dev/null; then
       printf '%s\n' "$$" > "$AI_LITELLM_LOCK_DIR/pid"
@@ -1759,8 +1759,8 @@ ai_litellm_start() {
     return 1
   fi
 
-  mkdir -p "$AI_LITELLM_HOME"
-  chmod 700 "$AI_LITELLM_HOME" 2>/dev/null || true
+  mkdir -p "$AI_LITELLM_PROXY_HOME"
+  chmod 700 "$AI_LITELLM_PROXY_HOME" 2>/dev/null || true
   [[ -f "$AI_LITELLM_LOG_FILE" ]] && chmod 600 "$AI_LITELLM_LOG_FILE" 2>/dev/null || true
 
   if ai_litellm_health; then
@@ -2787,9 +2787,9 @@ ai_litellm_sync() {
   # acquire AI_LITELLM_LOCK_DIR without deadlocking. Non-blocking: a second sync
   # fails loud rather than interleaving cross-file writes. dry-run writes nothing,
   # so it needs no lock. A dead holder (crashed sync) is reclaimed.
-  local sync_lock="$AI_LITELLM_HOME/litellm.sync.lock" sync_lock_held=0
+  local sync_lock="$AI_LITELLM_PROXY_HOME/litellm.sync.lock" sync_lock_held=0
   if (( ! dry_run )); then
-    mkdir -p "$AI_LITELLM_HOME"
+    mkdir -p "$AI_LITELLM_PROXY_HOME"
     if mkdir "$sync_lock" 2>/dev/null; then
       printf '%s\n' "$$" > "$sync_lock/pid"
       date -u '+%Y-%m-%dT%H:%M:%SZ' > "$sync_lock/started_at"
@@ -4297,7 +4297,7 @@ ai_litellm_model_reasoning_unset() {
 
 ai_litellm_reasoning_observation_record() {
   local observation_json="$1"
-  mkdir -p "$AI_LITELLM_HOME"
+  mkdir -p "$AI_LITELLM_PROXY_HOME"
   node -e '
 const fs = require("fs");
 const [file, raw] = process.argv.slice(1);
@@ -5361,7 +5361,7 @@ ai_litellm_context_probe_runtime_surface() {
 
 ai_litellm_context_observation_record() {
   local observation_json="$1"
-  mkdir -p "$AI_LITELLM_HOME"
+  mkdir -p "$AI_LITELLM_PROXY_HOME"
   node -e '
 const fs = require("fs");
 const [file, raw] = process.argv.slice(1);
@@ -6113,13 +6113,13 @@ ai_litellm_cmd_key() {
 }
 
 ai_litellm_uninstall() {
-  local script="$AI_LITELLM_FABRIC_HOME/scripts/uninstall.zsh"
+  local script="$AI_LITELLM_HOME/scripts/uninstall.zsh"
   if [[ ! -f "$script" ]]; then
     echo "Installed uninstall script not found: $script" >&2
     echo "Run scripts/uninstall.zsh from the repository checkout, or reinstall the package." >&2
     return 1
   fi
-  zsh "$script" --prefix "$AI_LITELLM_FABRIC_HOME" "$@"
+  zsh "$script" --prefix "$AI_LITELLM_HOME" "$@"
 }
 
 ai_litellm_cmd_context() {

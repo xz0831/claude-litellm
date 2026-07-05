@@ -63,13 +63,13 @@ trap 'rm -rf "$tmp_home" "$spaced_home"' EXIT
 LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-$$" HOME="$tmp_home" "$repo_root/scripts/install.zsh" >/dev/null
 REAL_HOME="$real_home" HOME="$tmp_home" OPENROUTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-openrouter-key-$$" zsh -fc '
 set -e
-prefix="$HOME/.local/share/ai-litellm-fabric"
-test -f "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/lib.zsh"
-test -f "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/context-observations.json"
-test -f "$HOME/.local/share/ai-litellm-fabric/config/litellm_config.yaml"
-test -f "$HOME/.local/share/ai-litellm-fabric/config/ai_litellm_callbacks/output_clamp.py"
-test -x "$HOME/.local/share/ai-litellm-fabric/scripts/uninstall.zsh"
-test -x "$HOME/.local/share/ai-litellm-fabric/bin/claude-litellm"
+prefix="$HOME/.local/share/ai-litellm"
+test -f "$HOME/.local/share/ai-litellm/config/ai-litellm/lib.zsh"
+test -f "$HOME/.local/share/ai-litellm/config/ai-litellm/context-observations.json"
+test -f "$HOME/.local/share/ai-litellm/config/litellm_config.yaml"
+test -f "$HOME/.local/share/ai-litellm/config/ai_litellm_callbacks/output_clamp.py"
+test -x "$HOME/.local/share/ai-litellm/scripts/uninstall.zsh"
+test -x "$HOME/.local/share/ai-litellm/bin/claude-litellm"
 test -x "$HOME/.local/bin/claude-litellm"
 "$HOME/.local/bin/ai-litellm" --help >/dev/null
 "$HOME/.local/bin/ai-litellm" status > "$HOME/status-text.out" 2>/dev/null
@@ -102,8 +102,8 @@ if "$HOME/.local/bin/ai-litellm" capabilities >/dev/null 2>&1; then echo "FAIL: 
 if "$HOME/.local/bin/ai-litellm" route list >/dev/null 2>&1; then echo "FAIL: retired route group still dispatches"; exit 1; fi
 if "$HOME/.local/bin/ai-litellm" audit model-policy >/dev/null 2>&1; then echo "FAIL: retired audit group still dispatches"; exit 1; fi
 echo "ok: retired surfaces loud-fail (P4 slimming)"
-! grep -R "__HOME__\\|__FABRIC_HOME__" "$prefix/config" "$prefix/docs" >/dev/null
-grep -q "AI_LITELLM_FABRIC_HOME=" "$HOME/.local/bin/ai-litellm"
+! grep -R "__HOME__\\|__AI_LITELLM_HOME__" "$prefix/config" "$prefix/docs" >/dev/null
+grep -q "AI_LITELLM_HOME=" "$HOME/.local/bin/ai-litellm"
 grep -q "exec.*bin/ai-litellm" "$HOME/.local/bin/ai-litellm"
 source "$prefix/config/ai-litellm/lib.zsh"
 grep -q "^LITELLM_MASTER_KEY=" "$prefix/state/ai-litellm/env"
@@ -115,9 +115,9 @@ test "$(ai_litellm_model_backend openrouter/moonshotai/kimi-k2.7-code)" = "openr
 ai_litellm_model_limits openrouter/xiaomi/mimo-v2.5 >/dev/null
 test "$(ai_litellm_model_reasoning_allowed_efforts openrouter/z-ai/glm-5.2)" = "none minimal low medium high xhigh"
 # Un-rendered placeholder guard (run-from-checkout footgun): a literal
-# __FABRIC_HOME__ path must be refused; the rendered prefix path must pass.
+# __AI_LITELLM_HOME__ path must be refused; the rendered prefix path must pass.
 # Non-vacuous: if the guard is missing, the positive assertion below fails.
-if ai_litellm_assert_rendered_path "__FABRIC_HOME__/state/codex-litellm" "test" 2>/dev/null; then
+if ai_litellm_assert_rendered_path "__AI_LITELLM_HOME__/state/codex-litellm" "test" 2>/dev/null; then
   echo "ai_litellm_assert_rendered_path accepted an un-rendered path" >&2
   exit 1
 fi
@@ -167,12 +167,12 @@ kill "$rob_mock_pid" 2>/dev/null || true
 # immediately before any file is touched. (Reclaim-of-dead-holder + release are
 # verified separately; not exercised here to keep the suite from running a full
 # regenerating sync.)
-mkdir -p "$AI_LITELLM_HOME"; mkdir "$AI_LITELLM_HOME/litellm.sync.lock"
-print -r -- "$$" > "$AI_LITELLM_HOME/litellm.sync.lock/pid"   # $$ is the live test shell -> kill -0 passes
-date -u "+%Y-%m-%dT%H:%M:%SZ" > "$AI_LITELLM_HOME/litellm.sync.lock/started_at"  # fresh -> age << max, no reclaim
+mkdir -p "$AI_LITELLM_PROXY_HOME"; mkdir "$AI_LITELLM_PROXY_HOME/litellm.sync.lock"
+print -r -- "$$" > "$AI_LITELLM_PROXY_HOME/litellm.sync.lock/pid"   # $$ is the live test shell -> kill -0 passes
+date -u "+%Y-%m-%dT%H:%M:%SZ" > "$AI_LITELLM_PROXY_HOME/litellm.sync.lock/started_at"  # fresh -> age << max, no reclaim
 sync_busy="$(ai_litellm_sync --no-restart 2>&1 || true)"
 [[ "$sync_busy" == *"another sync is in progress"* ]]
-rm -f "$AI_LITELLM_HOME/litellm.sync.lock/pid" "$AI_LITELLM_HOME/litellm.sync.lock/started_at"; rmdir "$AI_LITELLM_HOME/litellm.sync.lock"
+rm -f "$AI_LITELLM_PROXY_HOME/litellm.sync.lock/pid" "$AI_LITELLM_PROXY_HOME/litellm.sync.lock/started_at"; rmdir "$AI_LITELLM_PROXY_HOME/litellm.sync.lock"
 ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-27B" "PlainLocal" >/dev/null
 grep -A8 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 131072"
 grep -A8 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_output_tokens: 16384"
@@ -778,7 +778,7 @@ test ! -e "$HOME/.claude"
 test ! -e "$HOME/.codex"
 '
 
-spaced_prefix="$spaced_home/with space/ai-litellm-fabric"
+spaced_prefix="$spaced_home/with space/ai-litellm"
 AI_LITELLM_SKIP_DASH_VENV=1 LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-spaced-$$" HOME="$spaced_home" "$repo_root/scripts/install.zsh" --prefix "$spaced_prefix" >/dev/null
 HOME="$spaced_home" "$spaced_home/.local/bin/ai-litellm" --help >/dev/null
 grep -q "'$spaced_prefix'" "$spaced_home/.local/bin/ai-litellm"

@@ -1,14 +1,14 @@
 # Claude Code on non-Anthropic models: LiteLLM proxy by default (OpenRouter +
 # local runtime routes), with an OpenRouter Anthropic-compatible direct mode.
 
-if ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}/config/ai-litellm/lib.zsh" ]]; then
-  source "${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}/config/ai-litellm/lib.zsh"
+if ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm}/config/ai-litellm/lib.zsh" ]]; then
+  source "${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm}/config/ai-litellm/lib.zsh"
 elif ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
   source "$HOME/.config/ai-litellm/lib.zsh"
 fi
 
 export CLAUDE_LITELLM_HARNESS="${CLAUDE_LITELLM_HARNESS:-claude}"
-export CLAUDE_LITELLM_HOME="${CLAUDE_LITELLM_HOME:-$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" paths.home 2>/dev/null || printf "${AI_LITELLM_STATE_HOME:-${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}/state}/claude-litellm")}"
+export CLAUDE_LITELLM_HOME="${CLAUDE_LITELLM_HOME:-$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" paths.home 2>/dev/null || printf "${AI_LITELLM_STATE_HOME:-${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm}/state}/claude-litellm")}"
 export CLAUDE_LITELLM_SETTINGS="${CLAUDE_LITELLM_SETTINGS:-$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" paths.settings 2>/dev/null || printf "$CLAUDE_LITELLM_HOME/settings.json")}"
 export CLAUDE_LITELLM_CLAUDE_CONFIG="${CLAUDE_LITELLM_CLAUDE_CONFIG:-$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" paths.configDir 2>/dev/null || printf "$CLAUDE_LITELLM_HOME/claude-config")}"
 export CLAUDE_LITELLM_SETTINGS_ARG="${CLAUDE_LITELLM_SETTINGS_ARG:-$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" paths.settingsArg 2>/dev/null || printf "$CLAUDE_LITELLM_HOME/overlay-settings.json")}"

@@ -5,11 +5,11 @@
   "adapter": "claude-code",
   "command": "claude",
   "paths": {
-    "home": "__FABRIC_HOME__/state/claude-litellm",
-    "settings": "__FABRIC_HOME__/config/claude-litellm/settings.json",
-    "configDir": "__FABRIC_HOME__/state/claude-litellm/claude-config",
-    "settingsArg": "__FABRIC_HOME__/state/claude-litellm/overlay-settings.json",
-    "settingsArgProxy": "__FABRIC_HOME__/state/claude-litellm/overlay-settings-proxy.json"
+    "home": "__AI_LITELLM_HOME__/state/claude-litellm",
+    "settings": "__AI_LITELLM_HOME__/config/claude-litellm/settings.json",
+    "configDir": "__AI_LITELLM_HOME__/state/claude-litellm/claude-config",
+    "settingsArg": "__AI_LITELLM_HOME__/state/claude-litellm/overlay-settings.json",
+    "settingsArgProxy": "__AI_LITELLM_HOME__/state/claude-litellm/overlay-settings-proxy.json"
   },
   "isolation": {
     "kind": "env-dir-var",
