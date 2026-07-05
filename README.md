@@ -336,7 +336,7 @@ Run this after every LiteLLM upgrade: the clamp findings are
 version-specific, and the doctor only checks configuration presence, not
 behavior.
 
-Current local result with LiteLLM 1.81.14: plain config does not override a
+Current local result with LiteLLM 1.91.0: plain config does not override a
 larger client `max_tokens`; `litellm_settings.modify_params: true` clamps
 `max_tokens` but not `max_completion_tokens`; a custom
 `async_pre_call_deployment_hook` clamps both before the mock provider receives

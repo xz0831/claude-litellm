@@ -140,9 +140,9 @@ codex는 자기 카탈로그로 모델을 검증·구동한다: 카탈로그는 
 
 **2층 — harness 예약(adapterConfig.outputReservation)** [기록]: 예약은 모델 능력치가 아니라 **harness 정책**이다 — 같은 모델에 두 harness가 다르게 예약할 수 있고, 능력치 메타데이터를 오염시키면 안 되므로 x-limits가 아닌 descriptor에 산다. 32000/8192/32768 삼중값: 32000은 C5 감사의 표준화 권고(관측된 codex 암묵 출력 ≈22K에 여유를 더한 값), minimumInput 32768은 입력 예산 바닥. 파생물: claude proxy의 `CLAUDE_CODE_MAX_OUTPUT_TOKENS=예약`/`AUTO_COMPACT_WINDOW=유효입력`(컴팩션이 프로바이더 거절보다 먼저 발화하도록), codex 카탈로그의 윈도우 축소(codex는 출력 예약 레버가 **없어서** — model_max_output_tokens는 파싱되고 무시됨이 검증됨 — 믿음 형성이 예약을 대신한다). 로컬 모델은 카탈로그 축소에서 면제(이미 정책 캡이 훨씬 낮아 이중 낭비).
 
-**3층 — gateway 강제(clamp + cost guardrail)** [기록+실증]: `async_pre_call_deployment_hook` 커스텀 콜백인 이유는 측정이다(verify_litellm_token_clamp.py, LiteLLM 1.81.14): `litellm_params.max_tokens`는 더 큰 클라이언트 값을 못 낮추고, `modify_params:true`는 max_tokens만 잡고 max_completion_tokens(codex의 responses 경로!)를 놓친다. 오직 이 훅만 둘 다 낮추며, deployment 선택 후라 model_info 인지 캡이 가능하다. clamp는 **lower-only**(키 부재 시 주입하지 않음 — 예약 도입은 harness 층의 일). guardrail은 청구서 등급이 아니라 사전 차단이다($1.06짜리 단일 요청 실측 + `--max-budget-usd`가 이 경로에서 하드 리밋이 아님이 확인된 후 만들어짐). 순서는 clamp→guardrail(가드레일이 클램프 후 요청을 가격하도록). doctor는 두 정책의 `enabled:false`를 설정 선택이 아니라 **고장**으로 취급한다 — 방어층은 공격이 아니라 "임시로 꺼둔 것"으로 죽는다.
+**3층 — gateway 강제(clamp + cost guardrail)** [기록+실증]: `async_pre_call_deployment_hook` 커스텀 콜백인 이유는 측정이다(verify_litellm_token_clamp.py, LiteLLM 1.81.14→1.91.0, 2026-07-05 재확인): `litellm_params.max_tokens`는 더 큰 클라이언트 값을 못 낮추고, `modify_params:true`는 max_tokens만 잡고 max_completion_tokens(codex의 responses 경로!)를 놓친다. 오직 이 훅만 둘 다 낮추며, deployment 선택 후라 model_info 인지 캡이 가능하다. clamp는 **lower-only**(키 부재 시 주입하지 않음 — 예약 도입은 harness 층의 일). guardrail은 청구서 등급이 아니라 사전 차단이다($1.06짜리 단일 요청 실측 + `--max-budget-usd`가 이 경로에서 하드 리밋이 아님이 확인된 후 만들어짐). 순서는 clamp→guardrail(가드레일이 클램프 후 요청을 가격하도록). doctor는 두 정책의 `enabled:false`를 설정 선택이 아니라 **고장**으로 취급한다 — 방어층은 공격이 아니라 "임시로 꺼둔 것"으로 죽는다.
 
-> **반론(이 층의 가장 강한 것들)**: ① guardrail 전역 200K는 Kimi의 적법한 221950 유효 입력보다 작다 — 스택이 정성껏 보존한 능력을 가드레일이 깨문다. 첫 실제 >200K 워크플로우가 나타나면 perModel 한도를 구현하라(권고 문서에 이미 스펙됨). ② 같은 예산 공식이 **세 언어에 다중 구현**되어 있다 — M5 로그가 blast-radius를 이유로 통합을 보류했고, check의 221950/3277 고정 단언이 드리프트 방지선이다. 이 서브시스템 최대의 잠재 버그원. → **이 반론은 §4a에서 갱신·일부 반박된다**: 실제 사본 수는 3이 아니라 **5개**이고(이 반론과 옛 감사가 4번째·5번째를 놓쳤다), 새 `verify_budget_consistency.py` 차분 테스트가 5개가 lockstep임을 *증명*하며 드리프트 위험을 통합의 blast-radius 없이 무력화한다. ③ 발견은 LiteLLM 1.81.14에 핀되어 있다 — 업그레이드마다 verify 스크립트를 재실행하라(스크립트의 recommended_policy는 modify_params가 충분해지면 훅 제거를 권하도록 짜여 있다: "검증되는 가장 단순한 메커니즘을 써라").
+> **반론(이 층의 가장 강한 것들)**: ① guardrail 전역 200K는 Kimi의 적법한 221950 유효 입력보다 작다 — 스택이 정성껏 보존한 능력을 가드레일이 깨문다. 첫 실제 >200K 워크플로우가 나타나면 perModel 한도를 구현하라(권고 문서에 이미 스펙됨). ② 같은 예산 공식이 **세 언어에 다중 구현**되어 있다 — M5 로그가 blast-radius를 이유로 통합을 보류했고, check의 221950/3277 고정 단언이 드리프트 방지선이다. 이 서브시스템 최대의 잠재 버그원. → **이 반론은 §4a에서 갱신·일부 반박된다**: 실제 사본 수는 3이 아니라 **5개**이고(이 반론과 옛 감사가 4번째·5번째를 놓쳤다), 새 `verify_budget_consistency.py` 차분 테스트가 5개가 lockstep임을 *증명*하며 드리프트 위험을 통합의 blast-radius 없이 무력화한다. ③ 발견은 LiteLLM 버전에 민감하다 — 1.81.14→1.91.0 업그레이드에서 재실행해 재확인됨(clamp 결과 불변, §4 참조): 다음 업그레이드마다도 verify 스크립트를 재실행하라(스크립트의 recommended_policy는 modify_params가 충분해지면 훅 제거를 권하도록 짜여 있다: "검증되는 가장 단순한 메커니즘을 써라").
 
 **drop_params: true** [재구성, pre-git]: N개 harness가 자기 방언(thinking/betas/effort)을 M개 백엔드에 過광고하는 구조에서, 끄면 거의 모든 라우트 조합이 400으로 하드 실패한다. 가용성-우선을 선택하고 그 비용(조용한 드롭)을 관측 가능하게 만들었다: reasoning matrix의 drop_risk 컬럼, 그리고 모델별 교정은 flag 반전이 아니라 `SUPPORTED_CAPABILITIES` 선언으로 한다(기본 미설정 — 현 동작 불변이 기록된 결정). 추론 품질이 이유 없이 낮으면 이 flag가 제1용의자다.
 
@@ -152,9 +152,11 @@ codex는 자기 카탈로그로 모델을 검증·구동한다: 카탈로그는 
 
 **결정: tool-call의 *충실도*는 fabric 책임(테스트 대상), *역량*은 모델 한계(불가항력)다 — 둘을 mock provider로 가르는 회귀 가드를 둔다.** [실증, 2026-06-15]
 
-모델이 harness 안에서 tool을 잘못 고르거나 방황하는 것은 모델 역량 문제로 fabric이 못 고친다. 그러나 **잘 만들어진 tool_use가 LiteLLM의 Anthropic↔OpenAI 번역에서 드롭/손상/400되는 것**(알려진 LiteLLM #25321/#26395/#28045류, streaming tool-arg 손상, multi-turn reasoning_content 결손)은 우리(번역 설정의 소유자) 책임이고 **LiteLLM 버전에 취약**하다. 그래서 `verify_litellm_token_clamp.py`와 같은 자리·방식의 `scripts/verify_tool_call_fidelity.py`를 둔다: mock OpenAI provider + throwaway 실제 LiteLLM proxy로, (a) Anthropic tools/tool_use/tool_result → OpenAI 요청 형태(요청 충실도)와 (b) OpenAI tool_calls → Anthropic tool_use 블록(응답 충실도)을, 단일·멀티턴 + Claude Code가 resume 시 만드는 thinking-block 동반 케이스(#26395 트리거)까지 무비용·결정론적으로 검증한다. 2026-06-15 실측: cloud(DeepSeek/Kimi)·로컬(Qwen3.6-27B) 모두 단일·멀티턴 tool 왕복이 깨끗했다 — 즉 모델이 방황하면 그것은 모델 한계이지 fabric 결함이 아님이 *증명 가능*하다. CI 잡 `tool-fidelity`가 litellm 1.81.14 핀으로 회귀를 막는다.
+모델이 harness 안에서 tool을 잘못 고르거나 방황하는 것은 모델 역량 문제로 fabric이 못 고친다. 그러나 **잘 만들어진 tool_use가 LiteLLM의 Anthropic↔OpenAI 번역에서 드롭/손상/400되는 것**(알려진 LiteLLM #25321/#26395/#28045류, streaming tool-arg 손상, multi-turn reasoning_content 결손)은 우리(번역 설정의 소유자) 책임이고 **LiteLLM 버전에 취약**하다. 그래서 `verify_litellm_token_clamp.py`와 같은 자리·방식의 `scripts/verify_tool_call_fidelity.py`를 둔다: mock OpenAI provider + throwaway 실제 LiteLLM proxy로, (a) Anthropic tools/tool_use/tool_result → OpenAI 요청 형태(요청 충실도)와 (b) OpenAI tool_calls → Anthropic tool_use 블록(응답 충실도)을, 단일·멀티턴 + Claude Code가 resume 시 만드는 thinking-block 동반 케이스(#26395 트리거)까지 무비용·결정론적으로 검증한다. 2026-06-15 실측: cloud(DeepSeek/Kimi)·로컬(Qwen3.6-27B) 모두 단일·멀티턴 tool 왕복이 깨끗했다 — 즉 모델이 방황하면 그것은 모델 한계이지 fabric 결함이 아님이 *증명 가능*하다. CI 잡 `tool-fidelity`가 litellm 1.91.0 핀으로 회귀를 막는다.
 
 > **반론**: mock은 우리 번역 계층만 격리해 친다(실제 provider의 tool-calling quirk는 `--live-model`로만). 그게 의도다 — 실 provider 호출은 과금·비결정적이라 CI에 못 넣는다. 실 백엔드 신뢰는 `--live-model` 수동 스모크가 담당한다.
+
+**갱신(1.91.0 재실측)** [실증, 2026-07-05]: litellm 1.9x는 Anthropic `/v1/messages`+tools 요청을 기본으로 Responses API(`/v1/responses`)에 라우팅한다(`_should_route_to_responses_api()`, `litellm/llms/anthropic/experimental_pass_through/messages/handler.py`) — 우리 chat-completions 백엔드(OpenRouter/oMLX)는 `/v1/responses`를 서빙하지 않으므로 방치하면 mock 아티팩트가 아닌 실제 tool-calling 회귀다. `litellm_settings.use_chat_completions_url_for_anthropic_messages: true`로 chat-completions 경로를 강제해 fidelity 5/5를 복구했다(1.81.14에는 이 키가 아직 없어 no-op임을 실측 확인 — 무조건 선반영 가능). CI `tool-fidelity` 핀도 1.91.0으로 올렸다.
 
 ---
 
@@ -222,7 +224,7 @@ claude/codex 두 현역 harness가 서로 다른 격리 전략을 쓰는 것은 
 | 기본 모드/디스패치/alias 해석/wire-strip | ✅ check |
 | 모델 선택 계약: unresolvable proxy positional은 loud-error(프롬프트 누출 금지) — §3 | ✅ check (06-13 추가; dispatcher stub 블록의 비-vacuous 단언) |
 | 발견 라우트 litellmParamsOverrides glob 주입(thinking-off 등) — §3 | ✅ check (06-13 추가; temp-settings 오버레이로 매칭/비매칭 검증) |
-| tool-call 번역 충실도(Anthropic↔OpenAI, 단일/멀티턴/thinking-resume) — §4 | ✅ verify_tool_call_fidelity.py + CI `tool-fidelity` 잡 (litellm 1.81.14 핀) |
+| tool-call 번역 충실도(Anthropic↔OpenAI, 단일/멀티턴/thinking-resume) — §4 | ✅ verify_tool_call_fidelity.py + CI `tool-fidelity` 잡 (litellm 1.91.0 핀) |
 | 공유 settings env 라우팅 키 금지 | ✅ launch lint + check |
 | 양 오버레이의 defaultMode=default **렌더 기본값** (라이브 오버레이의 운영자 상향은 사양임 — §2) | ✅ check (06-12 추가; throwaway HOME의 신규 렌더만 검사) |
 | symlink 존재·대상·`~/.claude` 비생성·멱등 | ✅ check |
@@ -282,7 +284,7 @@ claude/codex 두 현역 harness가 서로 다른 격리 전략을 쓰는 것은 
 | 전제 | 깨지면 재론할 결정 |
 |---|---|
 | OpenRouter Anthropic skin의 tool-calling 미검증 | direct 보조 경로 지위 (검증되면 승격 또는 듀얼 모드 자체의 단순화) |
-| LiteLLM 1.81.14의 clamp 결함 | C4 커스텀 훅 (verify가 modify_params 충분을 보고하면 훅 제거) |
+| LiteLLM 1.91.0(2026-07-05 재실측): clamp 훅 여전히 필요·동작; tool-call은 `use_chat_completions_url_for_anthropic_messages: true` 필요(1.9x가 /v1/messages를 Responses API로 라우팅) | C4 커스텀 훅(verify가 modify_params 충분을 보고하면 훅 제거) + tool-call 플래그(LiteLLM이 기본 라우팅을 되돌리면 재론) |
 | codex의 카탈로그 검증 + profile-v2 상속 함정 | CODEX_HOME 완전 격리(codex facade 네이밍은 2026-07-04 실명 전환으로 이미 재론·해소됨 — 위 §3 대체 표기 참조) |
 | codex가 로그아웃 상태에서 ACTIVE 카탈로그를 노출하지 않음 (§3/§2a) | 생성 카탈로그의 스키마 템플릿·보존 규칙이 여전히 `--bundled`(active 아님) 기준선에 의존, track-4(native 카탈로그 소싱) 기각 — active-슬러그 제약 자체는 실명 전환으로 무의미화(카탈로그가 registry를 거울함) |
 | `ANTHROPIC_DEFAULT_FABLE_MODEL`이 Claude Code 네이티브 env임 (§1) | fable의 4번째 일급 tier 지위 (env가 무시되면 fable은 다른 tier로 폴백) |

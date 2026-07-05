@@ -309,7 +309,7 @@ LiteLLM gateway의 입력 한도 방어와 출력 예약 clamp는 별개다. Lit
 
 이 스크립트는 실제 provider를 호출하지 않는다. 로컬 OpenAI-compatible mock provider와 임시 LiteLLM proxy를 띄운 뒤, mock provider가 받은 JSON body를 증거로 삼는다.
 
-LiteLLM 1.81.14 기준 관찰:
+LiteLLM 1.81.14→1.91.0(2026-07-05 재확인) 기준 관찰:
 
 - `litellm_params.max_tokens`는 client가 `max_tokens`를 보내지 않으면 기본값으로 upstream에 들어간다.
 - plain config는 client가 더 큰 `max_tokens`를 보내면 override하지 못한다.
@@ -634,7 +634,7 @@ ai-litellm key status
 
 - Claude output reservation: 구현. `max_output_tokens` 능력치 anchor는 그대로 두고, Claude harness에 `adapterConfig.outputReservation`을 추가했다. 채택 범위는 (1) 출력 예약 분리와 (3) 회계 정직화이다. proxy-level C4 hook은 별도 gateway defense-in-depth로 활성화했다.
 - OpenCode reservation: 구현. OpenCode는 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX={{reservation.output}}`를 주입한다. context doctor는 Claude 전용 체크 대신 모든 `adapterConfig.outputReservation` harness를 검사한다.
-- Proxy output clamp / cost guardrail 검증/활성화: 구현. `scripts/verify_litellm_token_clamp.py`가 mock provider로 LiteLLM 1.81.14를 검증한다. plain config는 client `max_tokens` override를 막지 못하고, `modify_params:true`는 `max_tokens`만 낮춘다. `max_completion_tokens`까지 포함한 hard clamp는 `async_pre_call_deployment_hook`에서 검증됐고, production hook은 `config/ai_litellm_callbacks/output_clamp.py`로 활성화했다. 같은 verifier가 estimated-token guardrail 초과 요청이 provider에 도달하지 않음을 확인한다.
+- Proxy output clamp / cost guardrail 검증/활성화: 구현. `scripts/verify_litellm_token_clamp.py`가 mock provider로 LiteLLM 1.81.14→1.91.0(2026-07-05 재확인)을 검증한다. plain config는 client `max_tokens` override를 막지 못하고, `modify_params:true`는 `max_tokens`만 낮춘다. `max_completion_tokens`까지 포함한 hard clamp는 `async_pre_call_deployment_hook`에서 검증됐고, production hook은 `config/ai_litellm_callbacks/output_clamp.py`로 활성화했다. 같은 verifier가 estimated-token guardrail 초과 요청이 provider에 도달하지 않음을 확인한다.
 - M1: 구현. context matrix/probe를 descriptor-driven으로 바꾸고 `adapterConfig.context`를 추가했다. 새 descriptor harness는 모델 선택이 registry에 있으면 코드 수정 없이 context row가 생긴다.
 - M5: 부분 구현. context capability는 descriptor data block으로 옮겼고, provider reasoning set/unset은 단일 mutation 함수와 단일 atomic write로 합쳤다. harness reasoning mutation은 adapter별 allowed/default/build 규칙을 한 Node table로 모았다. 더 큰 registry-normalization core 추출은 Ruby/Python/Node 경계를 동시에 흔드는 리팩터라 이번에는 보류한다.
 - M6: 구현. `reasoning matrix`가 read/observability 정본이고, `model reasoning [model]` table alias는 deprecated 경고 후 위임한다. `model reasoning set|unset|probe`는 mutation/probe surface로 남긴다.
@@ -730,6 +730,15 @@ P6이 `ai-litellm model add`/`model remove`를 추가했다(코드 커밋 4b40a7
 - **OpenRouter capability 엔진 재사용 + fixture 주입**: 새 페치 로직을 따로 만들지 않고 `ai_litellm_model_refresh_capabilities`가 쓰던 `AI_LITELLM_OPENROUTER_MODELS_JSON`(설정 시 curl 대신 그 파일을 읽음) 관례를 그대로 재사용한다 — `check.zsh`가 이 env로 add/remove 왕복을 오프라인 검증한다(`AI_LITELLM_SKIP_SYNC=1`로 실제 proxy 재기동 없이 registry 쓰기만 확인). 쓰기 자체도 기존 atomic write(tmp+rename, 퍼미션 보존)와 line-splice(파일 전체 reserialize 아님) 관례를 그대로 따른다.
 - **output cap `owned-policy` fallback**: OpenRouter가 `top_provider.max_completion_tokens`를 공개하지 않으면(Mimo-V2.5가 밟은 것과 같은 패턴) `min(max_input_tokens, 32768)`을 `owned-policy`로 채우고 stderr에 review 경고를 낸다 — GLM-5.2가 provider-confidence로 전환되기 전까지 밟았던 패턴을 신규 모델 추가 경로에도 구조적으로 반복시킨다.
 - **`model remove`의 4중 가드**: tier(alias/directAlias)나 Codex `catalogEntries`가 참조 중인 surface, discovered local route(BEGIN/END 관리 블록), local route(`api_key: none`), `codex-auto-review`(Codex `review`가 하드코딩하는 functional slug)는 모두 loud-fail로 거부한다 — 참조 검사가 삭제보다 먼저 실행되므로 tier가 가리키는 모델을 실수로 지우는 경로가 없다.
+
+## 2026-07-05 litellm 1.91.0 업그레이드 결정 로그
+
+P8 Task 1이 litellm 핀을 1.81.14 → 1.91.0으로 올렸다(config + CI + fidelity 스크립트 + docs, 단일 커밋).
+
+- **1.9x Responses-API 라우팅 회귀 + 트리거 위치**: [실증] litellm 1.9x는 Anthropic `/v1/messages`+tools 요청을 기본적으로 Responses API(`/v1/responses`)에 라우팅한다 — 트리거는 `litellm/llms/anthropic/experimental_pass_through/messages/handler.py::_should_route_to_responses_api()`(`custom_llm_provider=="openai"`인 라우트 대상). 우리 chat-completions 백엔드(OpenRouter/oMLX)는 `/v1/responses`를 서빙하지 않으므로, 방치하면 mock 아티팩트가 아닌 실제 tool-calling 회귀다(격리 조사로 확인).
+- **`litellm_settings.use_chat_completions_url_for_anthropic_messages: true` 플래그로 무력화**: [실증] `config/litellm_config.yaml`과 `verify_tool_call_fidelity.py`의 생성 config 양쪽에 추가해 chat-completions 경로를 강제, fidelity 5/5 복구(1.91.0 격리 venv 재확인). 1.81.14에서는 이 키가 아직 없어 **no-op**임을 실측 확인했으므로 무조건 선반영해도 안전하다.
+- **clamp C4 훅은 불변 — 재실측 완료**: [실증] `verify_litellm_token_clamp.py`를 1.91.0에서 재실행한 결과 `recommended_policy: async_pre_call_deployment_hook`으로 1.81.14와 동일 — plain config/`modify_params:true`의 부족도 동일하게 재현됐다. CI `token-clamp`/`tool-fidelity` 잡의 pip 설치 버전을 1.91.0으로 올렸다.
+- **Python 제약 — pipx 3.13이 이미 충족**: litellm 1.91.0은 Python <3.14를 요구한다. 격리 재실측은 python3.13 venv(`litellm[proxy]==1.91.0`)로 수행했고, 실 머신의 pipx litellm venv도 이미 python3.13이라 마이그레이션(별도 rollout 작업)에서 인터프리터 재설치가 불필요하다.
 
 ## Per-Model 자격검증 프로토콜 (신규 로컬 모델마다 실행)
 

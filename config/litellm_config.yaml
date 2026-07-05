@@ -152,6 +152,10 @@ litellm_settings:
   # correction is a SUPPORTED_CAPABILITIES declaration, not flipping this flag.
   drop_params: true
   callbacks: [ai_litellm_callbacks.output_clamp.proxy_handler_instance]
+  # 1.9x routes Anthropic /v1/messages + tools to the Responses API by default;
+  # our chat-completions backends (OpenRouter/vLLM) do not serve /v1/responses.
+  # Force the chat-completions path. No-op on <=1.81.14 (the flag did not exist).
+  use_chat_completions_url_for_anthropic_messages: true
 
 router_settings:
   # Enforce max_input_tokens at the gateway: oversized prompts are rejected

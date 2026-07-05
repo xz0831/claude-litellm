@@ -268,6 +268,10 @@ general_settings:
   master_key: {master_key}
 litellm_settings:
   drop_params: true
+  # Mirrors config/litellm_config.yaml: 1.9x routes Anthropic /v1/messages+tools
+  # to the Responses API by default; force chat-completions so this fixture
+  # exercises the same path production does. No-op on <=1.81.14.
+  use_chat_completions_url_for_anthropic_messages: true
 """
     path = tmpdir / "litellm_config.yaml"
     path.write_text(cfg)
