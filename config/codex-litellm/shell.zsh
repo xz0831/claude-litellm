@@ -282,6 +282,14 @@ codex-litellm-refresh-catalog() {
   descriptor="$(ai_litellm_harness_descriptor "$CODEX_LITELLM_HARNESS")" || return 1
   local codex_command
   codex_command="$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" command 2>/dev/null || printf 'codex')"
+  # codex-absent is a benign skip (keep the install-time catalog), distinct from
+  # codex present-but-erroring/timing-out below (a real failure worth flagging).
+  # Mirrors ai_litellm_sync, which skips the codex catalog when codex is absent.
+  if ! command -v "$codex_command" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    echo "codex catalog refresh skipped: ${codex_command} not installed; existing catalog kept."
+    return 0
+  fi
   local catalog_merge_json
   catalog_merge_json="$(ai_litellm_ruby -ryaml -rjson -e '
 registry = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
