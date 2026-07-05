@@ -61,7 +61,7 @@ tmp_home="$(mktemp -d)"
 spaced_home="$(mktemp -d)"
 trap 'rm -rf "$tmp_home" "$spaced_home"' EXIT
 LITELLM_MASTER_KEY= LITELLM_MASTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-key-$$" HOME="$tmp_home" "$repo_root/scripts/install.zsh" >/dev/null
-REAL_HOME="$real_home" HOME="$tmp_home" zsh -fc '
+REAL_HOME="$real_home" HOME="$tmp_home" OPENROUTER_KEYCHAIN_ACCOUNT="ai-litellm-check-no-openrouter-key-$$" zsh -fc '
 set -e
 prefix="$HOME/.local/share/ai-litellm-fabric"
 test -f "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/lib.zsh"
@@ -77,6 +77,31 @@ grep -q "harness model mappings:" "$HOME/status-text.out"
 "$HOME/.local/bin/ai-litellm" status --json > "$HOME/status.json" 2>/dev/null
 node -e "const o=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\"));for(const k of [\"proxy\",\"harnesses\",\"runtimes\",\"keys\",\"models\"]) if(!(k in o)){console.error(\"status --json missing key: \"+k);process.exit(1)}" "$HOME/status.json"
 echo "ok: status one-shot summary (text + json)"
+# ── P4 slimming: retired user-surface commands must loud-fail, not dispatch ──
+# Every flat alias, the route/audit groups, and the top-level capabilities
+# command are retired outright (see the H4/H5/H6 blocks below for the
+# behavioral/usage-text rekeying of what still partially worked pre-P4).
+# OPENROUTER_KEYCHAIN_ACCOUNT above is isolated from the real machine key so
+# ai_litellm_start can never get past its missing-key guard here, regardless
+# of whether some other real proxy happens to be reachable on the default
+# port -- these checks must never be able to spawn a real litellm process.
+if "$HOME/.local/bin/ai-litellm" start >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" stop >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" restart >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" logs >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" --doctor >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" list >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" route-info >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" probe-route >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" runtime-status >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" harnesses >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" harness-info >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" launch >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" key-status >/dev/null 2>&1; then echo "FAIL: retired flat alias still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" capabilities >/dev/null 2>&1; then echo "FAIL: retired capabilities still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" route list >/dev/null 2>&1; then echo "FAIL: retired route group still dispatches"; exit 1; fi
+if "$HOME/.local/bin/ai-litellm" audit model-policy >/dev/null 2>&1; then echo "FAIL: retired audit group still dispatches"; exit 1; fi
+echo "ok: retired surfaces loud-fail (P4 slimming)"
 ! grep -R "__HOME__\\|__FABRIC_HOME__" "$prefix/config" "$prefix/docs" >/dev/null
 grep -q "AI_LITELLM_FABRIC_HOME=" "$HOME/.local/bin/ai-litellm"
 grep -q "exec.*bin/ai-litellm" "$HOME/.local/bin/ai-litellm"
@@ -209,11 +234,14 @@ if(!(\"isolationEnv\" in o)){console.error(\"missing isolationEnv\");process.exi
 if(\"isolation\" in o){console.error(\"stale isolation key still present\");process.exit(1)}" "$hi_claude" \
   || { echo "FAIL: harness info claude --json isolationEnv key wrong"; exit 1; }
 echo "ok: harness info claude --json isolationEnv key"
-# ── --json contract: route list, runtime status, reasoning matrix, context matrix ──
-for cmd in "route list" "runtime status" "reasoning matrix" "context matrix"; do
+# ── --json contract: runtime status, reasoning matrix, context matrix ──
+# (route list --json is retired along with the whole route group -- P4
+# slimming; model list --json above already carries the name/backend shape
+# that route list used to be the only place to see.)
+for cmd in "runtime status" "reasoning matrix" "context matrix"; do
   json_check "$cmd --json" "$HOME/.local/bin/ai-litellm" ${=cmd} --json
 done
-echo "ok: route/runtime/reasoning/context --json"
+echo "ok: runtime/reasoning/context --json"
 # ── reasoning allowed --json (model + harness) ────────────────────────────────
 m_allowed="$("$HOME/.local/bin/ai-litellm" model reasoning allowed GLM-5.2-openrouter --json 2>/dev/null)"
 print -r -- "$m_allowed" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);if(!Array.isArray(a)||!a.includes(\"high\")){console.error(\"not an array with high\");process.exit(1)}})" \
@@ -250,44 +278,55 @@ echo "ok: key set stores newline-less piped secret (dash stdin path)"
 # ── H4: usage labels are real verbs; Effort is a reference, not a command ──
 usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
 [[ "$usage_out" == *"Uninstall:"* ]]      || { echo "FAIL: usage missing 'Uninstall:' label" >&2; exit 1; }
-[[ "$usage_out" == *"Capabilities:"* ]]   || { echo "FAIL: usage missing 'Capabilities:' label" >&2; exit 1; }
+# P4 slimming: capabilities is retired as a top-level command (status covers
+# it -- ai_litellm_capabilities is still called from within cmd_status), so
+# --help must no longer advertise a standalone Capabilities: row.
+[[ "$usage_out" != *"Capabilities:"* ]]   || { echo "FAIL: usage still advertises the retired Capabilities: row" >&2; exit 1; }
 [[ "$usage_out" != *"  Delete:"* ]]       || { echo "FAIL: usage still has stale 'Delete:' label" >&2; exit 1; }
 [[ "$usage_out" != *"  Caps:"* ]]         || { echo "FAIL: usage still has stale 'Caps:' label" >&2; exit 1; }
 # Effort enum must NOT be presented as a left-hand command token
 [[ "$usage_out" != *"  Effort:"* ]]       || { echo "FAIL: Effort still formatted as a command row" >&2; exit 1; }
 [[ "$usage_out" == *"effort values"* ]]   || { echo "FAIL: Effort reference heading missing" >&2; exit 1; }
+# P4 slimming: route/audit groups are retired and every flat-form alias is
+# sunset, so --help must no longer advertise any of these rows/paragraphs.
+[[ "$usage_out" != *"Route:"* ]]          || { echo "FAIL: usage still advertises the retired Route group" >&2; exit 1; }
+[[ "$usage_out" != *"Audit:"* ]]          || { echo "FAIL: usage still advertises the retired Audit group" >&2; exit 1; }
+[[ "$usage_out" != *"Flat forms"* ]]      || { echo "FAIL: usage still advertises the retired flat-form aliases paragraph" >&2; exit 1; }
 echo "ok: usage labels (H4)"
 
-# H6: route probing consolidated to a single spelling: route probe.
+# H6 REVERSAL (P4): route is retired entirely (absorbed into model: see the
+# retired-surfaces loud-fail block above), so probe returns to model as the
+# canonical spelling -- a conscious reversal of the prior H6 decision (route
+# probe was canonical and model probe warned+delegated toward it; now route
+# does not exist at all and model probe is canonical, with no deprecation
+# warning). See DESIGN_RATIONALE for the decision-log entry.
 # IMPORTANT: this whole battery runs inside a zsh -fc SINGLE-QUOTED string, so
-# the source here must contain NO apostrophes. The deprecation warning contains
-# literal quotes (ai-litellm: QUOTEmodel probeQUOTE is deprecated; use ...), so
-# every apostrophe position is matched with a glob * instead of a literal quote.
-# Deprecated spellings still run but WARN+delegate toward route probe (never
-# silently break). The warn prints to stderr before the network probe runs, so
-# 2>&1 + substring captures it even though the probe then fails (proxy down in
-# the throwaway HOME) -- hence the trailing || true; we assert only on the warn.
-[[ "$("$HOME/.local/bin/ai-litellm" model probe X 2>&1 || true)" == *"model probe"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: model probe not deprecated to route probe" >&2; exit 1; }
-[[ "$("$HOME/.local/bin/ai-litellm" route check X 2>&1 || true)" == *"route check"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: route check not deprecated to route probe" >&2; exit 1; }
-[[ "$("$HOME/.local/bin/ai-litellm" probe-route X 2>&1 || true)" == *"probe-route"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: probe-route not deprecated to route probe" >&2; exit 1; }
-# Canonical route probe with NO args defaults to all models (absorbed check):
+# the source here must contain NO apostrophes.
+# model probe X is canonical now: NO deprecation warning. X is a bogus model
+# name, so ai_litellm_model_resolve fails before any billable network call
+# (see ai_litellm_probe_route) -- this stays non-billable, same as pre-P4.
+# (Note: ai_litellm_probe_route reassigns model_name from the failed resolve
+# before printing the fail message, so the bogus name itself does not appear
+# in the output -- "not present in" is the stable, existing substring.)
+model_probe_out="$("$HOME/.local/bin/ai-litellm" model probe X 2>&1 || true)"
+[[ "$model_probe_out" != *"is deprecated"* ]] || { echo "FAIL: model probe still prints a deprecation warning (H6 reversal: probe is canonical again)" >&2; exit 1; }
+[[ "$model_probe_out" == *"not present in"* ]] || { echo "FAIL: model probe did not attempt to resolve the requested model" >&2; exit 1; }
+# probe-route (flat alias) and route check are both retired along with the
+# flat-alias set and the route group respectively; see the loud-fail block
+# above (installed-copy smoke area) and route list there for their coverage --
+# once route) dispatch is gone, every route subcommand fails identically.
+# Canonical model probe with NO args defaults to all models (absorbed check):
 # it must NOT print the empty-args usage error that the bare probe fn emits.
-[[ "$("$HOME/.local/bin/ai-litellm" route probe 2>&1 || true)" != *"Usage: ai-litellm probe-route <model_name>"* ]] || { echo "FAIL: route probe with no arg did not default to all models" >&2; exit 1; }
-# Route usage no longer advertises check; consolidated to probe [model...].
-route_usage="$("$HOME/.local/bin/ai-litellm" route bogus 2>&1 || true)"
-[[ "$route_usage" == *"route list|info [model]|probe [model...]"* ]] || { echo "FAIL: route usage not consolidated to probe [model...]" >&2; exit 1; }
-[[ "$route_usage" != *"check ["* ]] || { echo "FAIL: route usage still advertises a check verb" >&2; exit 1; }
-# Model usage no longer advertises a probe <model...> spelling (still works via alias).
-[[ "$("$HOME/.local/bin/ai-litellm" model bogus 2>&1 || true)" != *"|probe <model"* ]] || { echo "FAIL: model usage still advertises probe <model...>" >&2; exit 1; }
-# Top-level --help no longer advertises route check.
-help_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
-[[ "$help_out" != *"check [model...]"* ]] || { echo "FAIL: --help still advertises route check" >&2; exit 1; }
-echo "ok: route probe consolidation (H6)"
+[[ "$("$HOME/.local/bin/ai-litellm" model probe 2>&1 || true)" != *"Usage: ai-litellm probe-route <model_name>"* ]] || { echo "FAIL: model probe with no arg did not default to all models" >&2; exit 1; }
+# Model usage now advertises probe [model...] as a first-class verb (H6 reversal).
+model_usage="$("$HOME/.local/bin/ai-litellm" model bogus 2>&1 || true)"
+[[ "$model_usage" == *"|probe [model"* ]] || { echo "FAIL: model usage does not advertise probe [model...] (H6 reversal)" >&2; exit 1; }
+echo "ok: model probe canonical again; route retired (H6 reversal)"
 
 # ── H5: unified top-level `ai-litellm doctor` runs the full battery by default ──
 # Doctors print headings and return nonzero when the proxy/runtime is down (it is,
 # in the throwaway HOME), so we assert on OUTPUT headings, not exit codes -- hence
-# the trailing || true. No apostrophes here (single-quoted zsh -fc, see H6 note).
+# the trailing || true. No apostrophes here (single-quoted zsh -fc block).
 full_doctor="$("$HOME/.local/bin/ai-litellm" doctor 2>&1 || true)"
 [[ "$full_doctor" == *"ai-litellm doctor"* ]]          || { echo "FAIL: doctor full battery missing global/proxy pass" >&2; exit 1; }
 [[ "$full_doctor" == *"ai-litellm context doctor"* ]]  || { echo "FAIL: doctor full battery missing context pass" >&2; exit 1; }
@@ -303,21 +342,44 @@ full_doctor="$("$HOME/.local/bin/ai-litellm" doctor 2>&1 || true)"
 # Unknown scope prints the doctor usage and does NOT run a battery.
 doctor_usage="$("$HOME/.local/bin/ai-litellm" doctor --bogus 2>&1 || true)"
 [[ "$doctor_usage" == *"doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]"* ]] || { echo "FAIL: doctor unknown scope usage" >&2; exit 1; }
-# Back-compat: the group doctors and audit model-policy still work standalone.
-[[ "$("$HOME/.local/bin/ai-litellm" audit model-policy 2>&1 || true)" == *"ai-litellm model policy audit"* ]] || { echo "FAIL: audit model-policy back-compat" >&2; exit 1; }
-[[ "$("$HOME/.local/bin/ai-litellm" proxy doctor 2>&1 || true)"       == *"ai-litellm doctor"* ]]              || { echo "FAIL: proxy doctor back-compat" >&2; exit 1; }
-# Deprecated --doctor flat flag still runs, warns toward the canonical spelling.
-deprecated_doctor="$("$HOME/.local/bin/ai-litellm" --doctor 2>&1 || true)"
-[[ "$deprecated_doctor" == *"--doctor"*" is deprecated; use "*"ai-litellm doctor"* ]] || { echo "FAIL: --doctor not deprecated to doctor" >&2; exit 1; }
-# Usage advertises the unified doctor row.
-[[ "$help_out" == *"Doctor:"* ]] || { echo "FAIL: --help missing unified Doctor row" >&2; exit 1; }
-echo "ok: unified doctor (H5)"
+# P4 slimming: the audit group and the per-group doctor VERBS are retired
+# from the user surface; doctor --<scope> (asserted above) is the sole entry
+# point. The underlying battery functions still exist (exercised via the
+# unified doctor above), so we assert on the ABSENCE of their headings here --
+# that proves the retired verb no longer reaches them, not just that the
+# overall call failed (which could be true pre-P4 too, e.g. proxy down).
+audit_out="$("$HOME/.local/bin/ai-litellm" audit model-policy 2>&1 || true)"
+[[ "$audit_out" != *"ai-litellm model policy audit"* ]] || { echo "FAIL: audit model-policy still runs the policy battery (retire the group)" >&2; exit 1; }
+proxy_doctor_out="$("$HOME/.local/bin/ai-litellm" proxy doctor 2>&1 || true)"
+[[ "$proxy_doctor_out" != *"ai-litellm doctor"* ]] || { echo "FAIL: proxy doctor still runs the doctor battery (retire the verb)" >&2; exit 1; }
+context_doctor_out="$("$HOME/.local/bin/ai-litellm" context doctor 2>&1 || true)"
+[[ "$context_doctor_out" != *"ai-litellm context doctor"* ]] || { echo "FAIL: context doctor still runs the doctor battery (retire the verb)" >&2; exit 1; }
+reasoning_doctor_out="$("$HOME/.local/bin/ai-litellm" reasoning doctor 2>&1 || true)"
+[[ "$reasoning_doctor_out" != *"ai-litellm reasoning doctor"* ]] || { echo "FAIL: reasoning doctor still runs the doctor battery (retire the verb)" >&2; exit 1; }
+# omlx is a real, local runtime (safe/non-billable to reference) so this exercises
+# the same code path ai_litellm_doctor_runtime uses once given a name.
+runtime_doctor_out="$("$HOME/.local/bin/ai-litellm" runtime doctor omlx 2>&1 || true)"
+[[ "$runtime_doctor_out" != *"ai-litellm doctor --runtime omlx"* ]] || { echo "FAIL: runtime doctor <name> still runs the doctor battery (retire the verb)" >&2; exit 1; }
+# --doctor (flat top-level alias) is one of the 13 retired flat forms; see the
+# loud-fail block above (installed-copy smoke area) for its assertion.
+# Usage advertises the unified doctor row; Doctor: is the sole surviving doctor row.
+[[ "$usage_out" == *"Doctor:"* ]] || { echo "FAIL: --help missing unified Doctor row" >&2; exit 1; }
+echo "ok: unified doctor (H5); audit/per-group-doctor verbs retired (P4 slimming)"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.
 params_settings_tmp="$HOME/omlx-params-test.json"
 test -n "$AI_LITELLM_SETTINGS" && test -f "$AI_LITELLM_SETTINGS"  # guard: never let jq fall back to stdin (would hang)
-jq '.runtimes.omlx.litellmParamsOverrides = {"*Test-35B*": {"extra_body": {"chat_template_kwargs": {"enable_thinking": false}}}}' < "$AI_LITELLM_SETTINGS" > "$params_settings_tmp"
+# P4-unrelated latent-bug fix: this filter previously used single quotes, which
+# (unlike the apostrophe-embedding trick elsewhere in this file) closed and
+# reopened the enclosing single-quoted zsh -fc string around SPACE-containing
+# content. That handed everything from " = {...}" onward to the outer shell as
+# separate, never-executed positional arguments (jq silently "succeeded" on the
+# stray /dev/null stdin it fell back to reading instead) -- truncating the
+# whole rest of the embedded script, including every check after this point.
+# Escaped double quotes (same idiom already used for node -e "..." elsewhere in
+# this file) keep the filter, spaces included, as one argument end to end.
+jq ".runtimes.omlx.litellmParamsOverrides = {\"*Test-35B*\": {\"extra_body\": {\"chat_template_kwargs\": {\"enable_thinking\": false}}}}" < "$AI_LITELLM_SETTINGS" > "$params_settings_tmp"
 AI_LITELLM_SETTINGS="$params_settings_tmp" ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-35B" "Qwen3.6-Test-27B" >/dev/null
 grep -A12 "model_name: Qwen3.6-Test-35B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
 ! grep -A12 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking"
@@ -333,7 +395,11 @@ ai_litellm_context_output_reservation_aligned
 # Non-vacuous: a drifted gateway copy must trip the guard (if-form avoids the zsh
 # `set -e` + return-1 early exit that bare !-negation can cause).
 reservation_drift_cfg="$HOME/reservation-drift.yaml"
-sed 's/tokenizer_headroom: 8192/tokenizer_headroom: 8191/' "$AI_LITELLM_CONFIG" > "$reservation_drift_cfg"
+# Same P4-unrelated latent-bug fix as the jq filter above: this sed expression
+# has a space either side of each ":", so naive single quotes here truncate
+# the rest of the embedded script the same way; double quotes fix it (no
+# internal double quotes or $ in this expression, so no escaping needed).
+sed "s/tokenizer_headroom: 8192/tokenizer_headroom: 8191/" "$AI_LITELLM_CONFIG" > "$reservation_drift_cfg"
 if AI_LITELLM_CONFIG="$reservation_drift_cfg" ai_litellm_context_output_reservation_aligned 2>/dev/null; then
   echo "output reservation alignment guard failed to detect a drifted gateway copy" >&2
   exit 1
@@ -388,8 +454,6 @@ else:
     raise AssertionError("large request was not rejected by cost guardrail")
 PY
 ai_litellm_context_observations DeepSeek >/dev/null
-matrix_opus="$(ai_litellm_context_matrix claude-litellm)"
-print -r -- "$matrix_opus" | grep -q ">=211580"
 budget="$(ai_litellm_harness_output_budget claude sonnet Mimo-V2.5-openrouter)"
 test "$(print -r -- "$budget" | jq -r ".effectiveInput == 1008384 and .reservation < .capability")" = "true"
 fable_budget="$(ai_litellm_harness_output_budget claude fable Kimi-K2.7-Code-openrouter)"
@@ -455,7 +519,7 @@ test "$(_claude_litellm_resolve_model_arg openrouter/z-ai/glm-5.2)" = "GLM-5.2-o
   # are non-vacuous: without the guard the stubbed launcher prints "proxy:" and
   # returns 0, so the negated tests fail.
   ! claude-litellm --proxy Qwen3.6-35B-omlx >/dev/null 2>&1
-  claude-litellm --proxy Qwen3.6-35B-omlx 2>&1 | grep -q "'Qwen3.6-35B-omlx' is not a selectable proxy model"
+  claude-litellm --proxy Qwen3.6-35B-omlx 2>&1 | grep -q "'\''Qwen3.6-35B-omlx'\'' is not a selectable proxy model"
   ! claude-litellm --proxy h35 >/dev/null 2>&1
   ! claude-litellm not-a-real-model >/dev/null 2>&1
   test "$(claude-litellm --proxy Qwen3.6-27B-omlx)" = "proxy:Qwen3.6-27B-omlx"
@@ -546,6 +610,34 @@ ai_litellm_model_limits Qwen3.6-27B-omlx >/dev/null
 runtime_routes_dedup="$(ai_litellm_runtime_routes_write omlx 1 Qwen3.6-27B-4bit)"
 [[ -z "$runtime_routes_dedup" ]]  # dedup must yield NO route for an upstream a registry entry already serves
 "$HOME/.local/bin/claude-litellm" --status >/dev/null
+# ── P4 slimming: launcher lifecycle flags retired; --list/--status survive ──
+# claude-litellm --start/--stop/--restart/--logs/--doctor move fully under
+# ai-litellm proxy *; the branches (warning text included) are deleted, so the
+# flag must no longer reach ai_litellm_start et al. The pre-P4 signature was a
+# WARN-then-delegate ("--start is deprecated"); its absence is the reliable,
+# environment-independent signal that the branch is gone -- the exit code
+# alone is not, since ai_litellm_start already returns nonzero pre-P4 whenever
+# no OpenRouter key is configured (as here), same as post-P4 unknown-flag
+# handling would.
+# NOTE: under the set -e this whole battery runs with, a bare `var="$(cmd)"`
+# aborts the script the instant cmd exits nonzero (zsh errexit applies to
+# assignments with command substitutions), before a separate `rc=$?` line
+# could ever run.
+# `if var="$(cmd)"; then ...` is exempt (assignment as an if-condition), so
+# that is how output+exit-code are captured together here, not `2>&1 || true`
+# (which would force success and hide a real nonzero-exit regression).
+if claude_start_out="$(claude-litellm --start 2>&1)"; then
+  echo "FAIL: claude-litellm --start no longer exits nonzero" >&2; exit 1
+fi
+[[ "$claude_start_out" != *"--start is deprecated"* ]] || { echo "FAIL: claude-litellm --start still warns and delegates (retire the branch)" >&2; exit 1; }
+if ! claude_list_out="$(claude-litellm --list 2>&1)"; then
+  echo "FAIL: claude-litellm --list no longer works" >&2; exit 1
+fi
+[[ "$claude_list_out" == *"Claude direct aliases"* ]] || { echo "FAIL: claude-litellm --list output shape changed" >&2; exit 1; }
+claude_status_rc=0
+claude-litellm --status >/dev/null 2>&1 || claude_status_rc=$?
+[[ $claude_status_rc -eq 0 ]] || { echo "FAIL: claude-litellm --status no longer works" >&2; exit 1; }
+echo "ok: claude-litellm lifecycle flags retired; --list/--status survive"
 source "$prefix/config/codex-litellm/shell.zsh"
 test "$(_codex_litellm_resolve_model openrouter/xiaomi/mimo-v2.5)" = "Mimo-V2.5-openrouter"
 test "$(_codex_litellm_resolve_model Mimo-V2.5-openrouter)" = "Mimo-V2.5-openrouter"
@@ -557,11 +649,40 @@ test "$(_codex_litellm_resolve_model Qwen3.6-27B-omlx)" = "Qwen3.6-27B-omlx"
 # the bounded probe times out and reports actionably; an instant stub passes.
 codex_stub_dir="$HOME/codex-stub"; mkdir -p "$codex_stub_dir"
 { print -r -- "#!/bin/sh"; print -r -- "exec sleep 30"; } > "$codex_stub_dir/hang-codex"; chmod +x "$codex_stub_dir/hang-codex"
-preflight_out="$(AI_LITELLM_CODEX_PREFLIGHT_TIMEOUT=1 _codex_litellm_preflight "$codex_stub_dir/hang-codex" 2>&1; print -r -- rc=$?)"
+preflight_out="$(set +e; AI_LITELLM_CODEX_PREFLIGHT_TIMEOUT=1 _codex_litellm_preflight "$codex_stub_dir/hang-codex" 2>&1; print -r -- rc=$?)"
 [[ "$preflight_out" == *"did not start within"* ]]
 [[ "$preflight_out" == *"rc=1"* ]]
 { print -r -- "#!/bin/sh"; print -r -- "echo codex-cli 0.0.0-test"; } > "$codex_stub_dir/ok-codex"; chmod +x "$codex_stub_dir/ok-codex"
 AI_LITELLM_CODEX_PREFLIGHT_TIMEOUT=5 _codex_litellm_preflight "$codex_stub_dir/ok-codex" >/dev/null 2>&1
+# ── P4 slimming: codex-litellm lifecycle flags + --route-info retired ──
+# --list/--status/--refresh-catalog survive (asserted below). Same
+# environment-independent-signal reasoning, and the same if/if-negated
+# assignment capture (see the claude-litellm block above), as this whole
+# battery still runs under `set -e`.
+if codex_doctor_out="$(codex-litellm --doctor 2>&1)"; then
+  echo "FAIL: codex-litellm --doctor no longer exits nonzero" >&2; exit 1
+fi
+[[ "$codex_doctor_out" != *"--doctor is deprecated"* ]] || { echo "FAIL: codex-litellm --doctor still warns and delegates (retire the branch)" >&2; exit 1; }
+# model info already covers what --route-info showed (M21), so the flag is
+# retired outright, not rekeyed. "is the proxy running" is the specific,
+# environment-independent signature of ai_litellm_route_info actually running
+# (it prints that whether or not a proxy happens to be reachable) -- its
+# absence proves the flag no longer reaches that function.
+if codex_routeinfo_out="$(codex-litellm --route-info 2>&1)"; then
+  echo "FAIL: codex-litellm --route-info no longer exits nonzero" >&2; exit 1
+fi
+[[ "$codex_routeinfo_out" != *"is the proxy running"* ]] || { echo "FAIL: codex-litellm --route-info still reaches ai_litellm_route_info (retire the flag)" >&2; exit 1; }
+if ! codex_list_out="$(codex-litellm --list 2>&1)"; then
+  echo "FAIL: codex-litellm --list no longer works" >&2; exit 1
+fi
+[[ "$codex_list_out" == *"Codex default"* ]] || { echo "FAIL: codex-litellm --list output shape changed" >&2; exit 1; }
+codex_status_rc=0
+codex-litellm --status >/dev/null 2>&1 || codex_status_rc=$?
+[[ $codex_status_rc -eq 0 ]] || { echo "FAIL: codex-litellm --status no longer works" >&2; exit 1; }
+codex_refresh_rc=0
+codex-litellm --refresh-catalog >/dev/null 2>&1 || codex_refresh_rc=$?
+[[ $codex_refresh_rc -eq 0 ]] || { echo "FAIL: codex-litellm --refresh-catalog no longer works" >&2; exit 1; }
+echo "ok: codex-litellm lifecycle flags + --route-info retired; --list/--status/--refresh-catalog survive"
 test "$(stat -f %Lp "$prefix/state")" = "700"
 test "$(stat -f %Lp "$prefix/state/ai-litellm")" = "700"
 "$HOME/.local/bin/ai-litellm" key set openrouter "PLACEHOLDER\$(touch $HOME/PWNED)END" >/dev/null 2>/dev/null
@@ -571,8 +692,14 @@ test ! -e "$HOME/PWNED"
 if command -v security >/dev/null 2>&1; then
   keychain_service="ai-litellm-check-openrouter-$$"
   REAL_HOME="${REAL_HOME:?}" HOME="$REAL_HOME" OPENROUTER_KEYCHAIN_SERVICE="$keychain_service" "$prefix/bin/ai-litellm" key set --keychain openrouter "PLACEHOLDER_KEYCHAIN" >/dev/null 2>/dev/null
-  test "$(HOME="$REAL_HOME" security find-generic-password -s "$keychain_service" -a "$USER" -w)" = "PLACEHOLDER_KEYCHAIN"
-  HOME="$REAL_HOME" security delete-generic-password -s "$keychain_service" -a "$USER" >/dev/null 2>&1
+  # Account must match what the store call above actually used: this whole
+  # script exports OPENROUTER_KEYCHAIN_ACCOUNT (see the zsh -fc env prefix,
+  # top of file) to isolate it from the real machine account/key, so the
+  # round-trip has to look it up under that same isolated account -- not the
+  # real $USER, which is what the store call would use only in the absence
+  # of that override.
+  test "$(HOME="$REAL_HOME" security find-generic-password -s "$keychain_service" -a "$OPENROUTER_KEYCHAIN_ACCOUNT" -w)" = "PLACEHOLDER_KEYCHAIN"
+  HOME="$REAL_HOME" security delete-generic-password -s "$keychain_service" -a "$OPENROUTER_KEYCHAIN_ACCOUNT" >/dev/null 2>&1
 fi
 "$HOME/.local/bin/ai-litellm" uninstall --dry-run >/dev/null
 sleep 60 &

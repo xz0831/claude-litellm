@@ -134,18 +134,6 @@ _claude_litellm_resolve_model_arg() {
   printf '%s\n' "$resolved_model"
 }
 
-claude-litellm-start() {
-  ai_litellm_start "$@"
-}
-
-claude-litellm-stop() {
-  ai_litellm_stop "$@"
-}
-
-claude-litellm-restart() {
-  ai_litellm_restart "$@"
-}
-
 claude-litellm-status() {
   echo "Claude settings: $CLAUDE_LITELLM_SETTINGS"
   echo "Claude config:   $CLAUDE_LITELLM_CLAUDE_CONFIG"
@@ -407,7 +395,7 @@ claude-litellm() {
       echo "       claude-litellm --list|--status   (harness-specific info)"
       echo "Default: LiteLLM proxy mode (OpenRouter + local routes); use --direct for the OpenRouter Anthropic-compatible endpoint."
       echo "Reasoning defaults: ai-litellm harness reasoning [set|unset] claude"
-      echo "Proxy lifecycle moved to: ai-litellm proxy start|stop|restart|logs|doctor"
+      echo "Proxy lifecycle moved to: ai-litellm proxy start|stop|restart|logs (diagnostics: ai-litellm doctor --proxy)"
       return 0
       ;;
     --list)
@@ -416,33 +404,6 @@ claude-litellm() {
       ;;
     --status)
       claude-litellm-status
-      return $?
-      ;;
-    --start)
-      echo "claude-litellm --start is deprecated; use 'ai-litellm proxy start'" >&2
-      claude-litellm-start
-      return $?
-      ;;
-    --stop)
-      echo "claude-litellm --stop is deprecated; use 'ai-litellm proxy stop'" >&2
-      claude-litellm-stop
-      return $?
-      ;;
-    --restart)
-      echo "claude-litellm --restart is deprecated; use 'ai-litellm proxy restart'" >&2
-      claude-litellm-restart
-      return $?
-      ;;
-    --logs)
-      echo "claude-litellm --logs is deprecated; use 'ai-litellm proxy logs'" >&2
-      shift
-      ai_litellm_logs "$@"
-      return $?
-      ;;
-    --doctor)
-      echo "claude-litellm --doctor is deprecated; use 'ai-litellm proxy doctor'" >&2
-      shift
-      ai_litellm_doctor "$@"
       return $?
       ;;
   esac

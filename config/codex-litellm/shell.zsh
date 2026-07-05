@@ -17,16 +17,6 @@ _codex_litellm_json() {
   ai_litellm_json_file "$CODEX_LITELLM_SETTINGS" "$1"
 }
 
-_codex_litellm_alias_target() {
-  node -e '
-const fs = require("fs");
-const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const value = data.aliases && data.aliases[process.argv[2]];
-if (!value) process.exit(1);
-console.log(value);
-' "$CODEX_LITELLM_SETTINGS" "$1"
-}
-
 _codex_litellm_resolve_route_model() {
   local requested="$1"
   if [[ -z "$requested" ]]; then
@@ -40,8 +30,12 @@ settings = JSON.parse(File.read(settings_path))
 descriptor = JSON.parse(File.read(descriptor_path))
 entries = Array(config["model_list"])
 aliases = settings["aliases"] || {}
-default_model = descriptor.dig("models", "default") || "gpt-5.5"
+default_model = descriptor.dig("models", "default")
 target = requested.to_s.empty? ? default_model : requested.to_s
+if target.to_s.empty?
+  $stderr.puts "codex descriptor missing models.default"
+  exit 1
+end
 target = aliases[target] if aliases[target]
 
 backend = ->(entry) { entry.dig("litellm_params", "model").to_s }
@@ -131,7 +125,8 @@ _codex_litellm_default_alias() {
   if [[ -n "$configured_model" ]]; then
     printf '%s\n' "$configured_model"
   else
-    printf 'gpt-5.5\n'
+    echo "codex descriptor missing models.default" >&2
+    return 1
   fi
 }
 
@@ -168,7 +163,11 @@ const q = (value) => JSON.stringify(String(value));
 const bool = (value) => value ? "true" : "false";
 const lines = [];
 
-lines.push(`model = ${q(models.default || "gpt-5.5")}`);
+if (!models.default) {
+  console.error("codex descriptor missing models.default");
+  process.exit(1);
+}
+lines.push(`model = ${q(models.default)}`);
 lines.push(`model_provider = ${q(provider.name || "litellm")}`);
 lines.push(`model_catalog_json = ${q(catalog)}`);
 lines.push(`model_reasoning_summary = ${q(adapter.modelReasoningSummary || "none")}`);
@@ -361,6 +360,7 @@ for (const entry of entries) {
     description: entry.description,
     priority: entry.priority,
     default_reasoning_level: entry.defaultReasoningLevel || base.default_reasoning_level,
+    visibility: entry.visibility ?? base.visibility ?? null,
     additional_speed_tiers: [],
     service_tiers: [],
     availability_nux: null,
@@ -389,27 +389,6 @@ process.stdout.write(JSON.stringify(catalog, null, 2) + "\n");
   echo "Wrote $CODEX_LITELLM_MODEL_CATALOG"
 }
 
-codex-litellm-route-info() {
-  local requested="$1"
-  local model_filter
-  if [[ -n "$requested" ]]; then
-    model_filter="$(_codex_litellm_alias_target "$requested" 2>/dev/null)" || model_filter="$requested"
-  fi
-  ai_litellm_route_info "$model_filter"
-}
-
-codex-litellm-start() {
-  ai_litellm_start "$@"
-}
-
-codex-litellm-stop() {
-  ai_litellm_stop "$@"
-}
-
-codex-litellm-restart() {
-  ai_litellm_restart "$@"
-}
-
 codex-litellm() {
   if ! typeset -f ai_litellm >/dev/null 2>&1; then
     echo "Missing shared LiteLLM library: $AI_LITELLM_CONFIG_HOME/ai-litellm/lib.zsh" >&2
@@ -422,9 +401,9 @@ codex-litellm() {
       echo "       codex-litellm exec \"prompt\""
       echo "       codex-litellm glm exec \"prompt\""
       echo "       codex-litellm openrouter/z-ai/glm-5.2 exec \"prompt\""
-      echo "       codex-litellm --list|--status|--route-info [model]|--refresh-catalog   (codex-specific)"
+      echo "       codex-litellm --list|--status|--refresh-catalog   (codex-specific)"
       echo "Reasoning defaults: ai-litellm harness reasoning [set|unset] codex"
-      echo "Proxy lifecycle moved to: ai-litellm proxy start|stop|restart|logs|doctor"
+      echo "Proxy lifecycle moved to: ai-litellm proxy start|stop|restart|logs (diagnostics: ai-litellm doctor --proxy)"
       return 0
       ;;
     -V|--version)
@@ -443,38 +422,6 @@ codex-litellm() {
       ;;
     --refresh-catalog)
       codex-litellm-refresh-catalog
-      return $?
-      ;;
-    --route-info)
-      shift
-      codex-litellm-route-info "$@"
-      return $?
-      ;;
-    --start)
-      echo "codex-litellm --start is deprecated; use 'ai-litellm proxy start'" >&2
-      codex-litellm-start
-      return $?
-      ;;
-    --stop)
-      echo "codex-litellm --stop is deprecated; use 'ai-litellm proxy stop'" >&2
-      codex-litellm-stop
-      return $?
-      ;;
-    --restart)
-      echo "codex-litellm --restart is deprecated; use 'ai-litellm proxy restart'" >&2
-      codex-litellm-restart
-      return $?
-      ;;
-    --logs)
-      echo "codex-litellm --logs is deprecated; use 'ai-litellm proxy logs'" >&2
-      shift
-      ai_litellm_logs "$@"
-      return $?
-      ;;
-    --doctor)
-      echo "codex-litellm --doctor is deprecated; use 'ai-litellm proxy doctor'" >&2
-      shift
-      ai_litellm_doctor "$@"
       return $?
       ;;
   esac

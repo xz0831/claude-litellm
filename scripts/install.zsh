@@ -20,8 +20,6 @@ Global shims:
   ~/.local/bin/ai-litellm
   ~/.local/bin/claude-litellm
   ~/.local/bin/codex-litellm
-  ~/.local/bin/openrouter-key-status
-  ~/.local/bin/litellm-master-key-status
 
 It does not write ~/.claude or ~/.codex and does not replace native claude/codex.
 Missing native harness commands are allowed; they are only required when the
@@ -302,7 +300,7 @@ for file in \
   require_file "$file"
 done
 
-for script in ai-litellm claude-litellm codex-litellm openrouter-key-status litellm-master-key-status; do
+for script in ai-litellm claude-litellm codex-litellm; do
   require_file "$repo_root/bin/$script"
 done
 
@@ -373,6 +371,15 @@ remove_retired_dash_router_support() {
 }
 remove_retired_dash_router_support
 
+remove_retired_key_status_shims() {
+  run rm -f "$bin_dir/openrouter-key-status" "$bin_dir/litellm-master-key-status"
+  for backup in "$bin_dir/openrouter-key-status".bak.*(N) "$bin_dir/litellm-master-key-status".bak.*(N); do
+    run rm -f "$backup"
+  done
+  run rm -f "$prefix/bin/openrouter-key-status" "$prefix/bin/litellm-master-key-status"
+}
+remove_retired_key_status_shims
+
 install_rendered "$repo_root/config/litellm_config.yaml" "$prefix/config/litellm_config.yaml"
 install_rendered "$repo_root/config/ai_litellm_callbacks/__init__.py" "$prefix/config/ai_litellm_callbacks/__init__.py"
 install_rendered "$repo_root/config/ai_litellm_callbacks/output_clamp.py" "$prefix/config/ai_litellm_callbacks/output_clamp.py"
@@ -392,7 +399,7 @@ install_rendered "$repo_root/config/codex-litellm/shell.zsh" "$prefix/config/cod
 install_rendered "$repo_root/docs/AI_AGENT_LITELLM_ARCHITECTURE.md" "$prefix/docs/AI_AGENT_LITELLM_ARCHITECTURE.md"
 install_executable "$repo_root/scripts/uninstall.zsh" "$prefix/scripts/uninstall.zsh"
 
-for script in ai-litellm claude-litellm codex-litellm openrouter-key-status litellm-master-key-status; do
+for script in ai-litellm claude-litellm codex-litellm; do
   install_executable "$repo_root/bin/$script" "$prefix/bin/$script"
   install_shim "$script"
 done
@@ -407,5 +414,5 @@ log "Next:"
 log "  ai-litellm key set --keychain openrouter"
 log "  claude-litellm --status"
 log "  ai-litellm sync"
-log "  ai-litellm context doctor"
-log "  ai-litellm proxy doctor   # for proxy-backed harnesses/routes"
+log "  ai-litellm doctor --context"
+log "  ai-litellm doctor --proxy   # for proxy-backed harnesses/routes"

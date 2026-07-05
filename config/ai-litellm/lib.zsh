@@ -2068,20 +2068,11 @@ ai_litellm_route_info() {
     | awk 'BEGIN { printf "%-18s %-48s %s\n", "model_name", "provider_model", "provider" } { printf "%-18s %-48s %s\n", $1, $2, $3 }'
 }
 
-ai_litellm_route_list_json() {
-  command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { printf '[]'; return 0; }
-  local master_key
-  master_key="$(ai_litellm_master_key 2>/dev/null)" || true
-  [[ -n "$master_key" ]] || { printf '[]'; return 0; }
-  local payload result
-  payload="$(ai_litellm_curl_auth "$master_key" --max-time 5 -fsS "$(ai_litellm_base_url)/model/info" 2>/dev/null)" || { printf '[]'; return 0; }
-  result="$(printf '%s\n' "$payload" | jq -c '[.data[]? | {modelName: .model_name, providerModel: (.litellm_params.model // .model_name), provider: (.model_info.litellm_provider // (.litellm_params.custom_llm_provider // ""))}]' 2>/dev/null)" || { printf '[]'; return 0; }
-  printf '%s' "${result:-[]}"
-}
-
 # Print the FULL model_info block (x-limits, extra_body, reasoning, litellm_provider,
 # ...) echoed by GET /model/info, so `model info <name>` confirms a synced param landed.
-# `route info` stays the slim model_name/provider_model/provider view above.
+# ai_litellm_route_info (above) stays the slim model_name/provider_model/provider
+# view; it is now purely an internal helper (proxy doctor + context probe) since
+# the route CLI group retired in P4 (route info converged with model info earlier).
 ai_litellm_model_info() {
   if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
     echo "Missing curl or jq." >&2
@@ -2172,7 +2163,7 @@ ai_litellm_probe_routes() {
   return $failed
 }
 
-openrouter-key-status() {
+ai_litellm_openrouter_key_status() {
   if [[ -n "$OPENROUTER_API_KEY" ]]; then
     echo "OPENROUTER_API_KEY: set in current environment"
     return 0
@@ -2196,7 +2187,7 @@ openrouter-key-status() {
   return 1
 }
 
-litellm-master-key-status() {
+ai_litellm_master_key_status() {
   if [[ -n "$LITELLM_MASTER_KEY" ]]; then
     echo "LITELLM_MASTER_KEY: set in current environment"
     return 0
@@ -2231,11 +2222,11 @@ litellm-master-key-load() {
 }
 
 ai_litellm_key_status() {
-  openrouter-key-status
-  litellm-master-key-status
+  ai_litellm_openrouter_key_status
+  ai_litellm_master_key_status
 }
 
-# Mirror of openrouter-key-status / litellm-master-key-status detection order — keep in sync.
+# Mirror of ai_litellm_openrouter_key_status / ai_litellm_master_key_status detection order — keep in sync.
 ai_litellm_key_source() {
   local key="$1"
   case "$key" in
@@ -5361,21 +5352,15 @@ end
   done
 }
 
-ai_litellm_context_warn_glm_output_source() {
+ai_litellm_context_warn_owned_policy_output_source() {
   ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 Array(config["model_list"]).each do |e|
-  next unless e.dig("litellm_params", "model").to_s == "openrouter/z-ai/glm-5.2"
+  model = e["model_name"]
   out = e.dig("model_info", "max_output_tokens")
   confidence = e.dig("model_info", "x_output_confidence").to_s
-  if out
-    if confidence == "owned-policy"
-      puts "owned-policy: GLM-5.2 output cap #{out} is a conservative local ceiling because OpenRouter omits max_completion_tokens."
-    elsif !%w[provider observed].include?(confidence)
-      puts "GLM-5.2 output cap #{out} is #{confidence.empty? ? "local-configured" : confidence}; keep provider-declared confidence lower unless OpenRouter max_completion_tokens is observed."
-    end
-  end
-  break
+  next unless out && confidence == "owned-policy"
+  puts "owned-policy: #{model} output cap #{out} is a conservative local ceiling (no provider/observed confirmation)."
 end
 ' "$AI_LITELLM_CONFIG" | while IFS= read -r line; do
     [[ -n "$line" ]] && ai_litellm_context_doctor_warn "$line"
@@ -5465,14 +5450,10 @@ ai_litellm_context_doctor() {
   ai_litellm_context_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
   ai_litellm_context_doctor_check "context matrix renders" ai_litellm_quiet ai_litellm_context_matrix || failed=1
   ai_litellm_context_warn_omlx_policy_cap
-  ai_litellm_context_warn_glm_output_source
+  ai_litellm_context_warn_owned_policy_output_source
   ai_litellm_context_warn_provider_capability_drift
   ai_litellm_context_warn_output_clamp
   return $failed
-}
-
-ai_litellm_deprecated() {
-  echo "ai-litellm: '$1' is deprecated; use 'ai-litellm $2'" >&2
 }
 
 # ── Noun-verb sub-dispatchers ────────────────────────────────────────────────
@@ -5486,8 +5467,7 @@ ai_litellm_cmd_proxy() {
     stop)      ai_litellm_stop ;;
     restart)   ai_litellm_restart ;;
     logs)      ai_litellm_logs "$@" ;;
-    doctor)    ai_litellm_doctor "$@" ;;
-    *) echo "Usage: ai-litellm proxy status|start|stop|restart|logs [lines]|doctor [--probe-routes|--probe-model name|--runtime name]" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm proxy status|start|stop|restart|logs [lines] (diagnostics: run doctor --proxy)" >&2; return 1 ;;
   esac
 }
 
@@ -5531,8 +5511,7 @@ ai_litellm_cmd_runtime() {
       elif [[ "${2:-}" == "--json" ]]; then ai_litellm_runtime_status_json "$1"
       else ai_litellm_runtime_status "$@"; fi
       ;;
-    doctor)    ai_litellm_doctor_runtime "$@" ;;
-    *) echo "Usage: ai-litellm runtime list|status [name]|doctor <name>" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm runtime list|status [name] (diagnostics: run doctor --runtime <name>)" >&2; return 1 ;;
   esac
 }
 
@@ -5548,6 +5527,19 @@ ai_litellm_cmd_model() {
       elif [[ "${2:-}" == "--json" ]]; then ai_litellm_model_limits_json "$1"
       else ai_litellm_limits_table "$@"; fi
       ;;
+    probe)
+      # route retired entirely in P4 (absorbed into model); probe returns to
+      # model as the canonical spelling -- a conscious reversal of the prior
+      # H6 decision (route probe was canonical and model probe warned and
+      # delegated toward it). No more deprecation delegation. The bare
+      # (0-args) default-to-all-models behavior is migrated verbatim from the
+      # probe dispatch branch that used to live on the retired route group.
+      if (( $# == 0 )); then
+        ai_litellm_probe_routes "${(@f)$(ai_litellm_model_names)}"
+      else
+        ai_litellm_probe_routes "$@"
+      fi
+      ;;
     refresh-capabilities) ai_litellm_model_refresh_capabilities "$@" ;;
     reasoning)
       case "${1:-}" in
@@ -5555,38 +5547,10 @@ ai_litellm_cmd_model() {
         set)     shift; ai_litellm_model_reasoning_set "$@" ;;
         unset)   shift; ai_litellm_model_reasoning_unset "$@" ;;
         allowed) shift; ai_litellm_model_reasoning_allowed_json "${1:-}" ;;
-        *)       ai_litellm_deprecated "model reasoning" "reasoning matrix"; ai_litellm_model_reasoning_table "$@" ;;
+        *)       echo "Usage: ai-litellm model reasoning probe <model> [effort]|set <model> <effort>|unset <model>|allowed <model>" >&2; return 1 ;;
       esac
       ;;
-    probe)        ai_litellm_deprecated "model probe" "route probe"; ai_litellm_probe_routes "$@" ;;
-    capabilities) ai_litellm_capabilities ;;
-    *) echo "Usage: ai-litellm model list|info [model]|limits [model]|refresh-capabilities [--apply|--json|--check]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|reasoning allowed <model>|capabilities" >&2; return 1 ;;
-  esac
-}
-
-ai_litellm_cmd_route() {
-  local verb="$1"; [[ $# -gt 0 ]] && shift
-  case "$verb" in
-    list|"")
-      if [[ "${1:-}" == "--json" ]]; then ai_litellm_route_list_json; else ai_litellm_route_info; fi
-      ;;
-    info)    ai_litellm_route_info "$@" ;;
-    probe)
-      if (( $# == 0 )); then
-        ai_litellm_probe_routes "${(@f)$(ai_litellm_model_names)}"
-      else
-        ai_litellm_probe_routes "$@"
-      fi
-      ;;
-    check)
-      ai_litellm_deprecated "route check" "route probe"
-      if (( $# == 0 )); then
-        ai_litellm_probe_routes "${(@f)$(ai_litellm_model_names)}"
-      else
-        ai_litellm_probe_routes "$@"
-      fi
-      ;;
-    *) echo "Usage: ai-litellm route list|info [model]|probe [model...]" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm model list|info [model]|limits [model]|probe [model...]|refresh-capabilities [--apply|--json|--check]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|reasoning allowed <model>" >&2; return 1 ;;
   esac
 }
 
@@ -5621,8 +5585,7 @@ ai_litellm_cmd_context() {
       ;;
     probe)     ai_litellm_context_probe "$@" ;;
     observations) ai_litellm_context_observations "$@" ;;
-    doctor)    ai_litellm_context_doctor "$@" ;;
-    *) echo "Usage: ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm context matrix [filter]|probe <surface|all>|observations [filter] (diagnostics: run doctor --context)" >&2; return 1 ;;
   esac
 }
 
@@ -5652,18 +5615,10 @@ ai_litellm_model_policy_audit() {
   ai_litellm_doctor_check "context matrix renders" ai_litellm_quiet ai_litellm_context_matrix || failed=1
   ai_litellm_doctor_check "reasoning matrix renders" ai_litellm_quiet ai_litellm_model_reasoning_table || failed=1
   ai_litellm_context_warn_omlx_policy_cap
-  ai_litellm_context_warn_glm_output_source
+  ai_litellm_context_warn_owned_policy_output_source
   ai_litellm_context_warn_provider_capability_drift
   ai_litellm_context_warn_output_clamp
   return $failed
-}
-
-ai_litellm_cmd_audit() {
-  local verb="$1"; [[ $# -gt 0 ]] && shift
-  case "$verb" in
-    model-policy|"") ai_litellm_model_policy_audit "$@" ;;
-    *) echo "Usage: ai-litellm audit model-policy" >&2; return 1 ;;
-  esac
 }
 
 ai_litellm_cmd_reasoning() {
@@ -5675,8 +5630,7 @@ ai_litellm_cmd_reasoning() {
       else ai_litellm_model_reasoning_table "$@"; fi
       ;;
     probe)     ai_litellm_model_reasoning_probe "$@" ;;
-    doctor)    ai_litellm_reasoning_doctor "$@" ;;
-    *) echo "Usage: ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm reasoning matrix [model]|probe <model> [effort] (diagnostics: run doctor --reasoning)" >&2; return 1 ;;
   esac
 }
 
@@ -5748,32 +5702,26 @@ ai_litellm_usage() {
 Usage: ai-litellm <group> <verb> [args]
 
   Status:        ai-litellm status [--json]  Proxy/harness/runtime/key/capability one-shot summary
-  Proxy:         ai-litellm proxy status|start|stop|restart|logs [lines]|doctor [opts]
+  Proxy:         ai-litellm proxy status|start|stop|restart|logs [lines]
   Harness:       ai-litellm harness list|info <name>|launch <name> [model] [args...]
                  ai-litellm harness reasoning [name]
                  ai-litellm harness reasoning set <name> <effort>
                  ai-litellm harness reasoning unset <name>
-  Runtime:       ai-litellm runtime list|status [name]|doctor <name>
-  Model:         ai-litellm model list|info [model]|limits [model]|refresh-capabilities [opts]|capabilities
+  Runtime:       ai-litellm runtime list|status [name]
+  Model:         ai-litellm model list|info [model]|limits [model]|probe [model...]|refresh-capabilities [opts]
                  ai-litellm model reasoning probe <model> [effort]
                  ai-litellm model reasoning set <model> <effort>
                  ai-litellm model reasoning unset <model>
-  Route:         ai-litellm route list|info [model]|probe [model...]
-  Context:       ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
-  Reasoning:     ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
-  Audit:         ai-litellm audit model-policy
+  Context:       ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]
+  Reasoning:     ai-litellm reasoning matrix [model]|probe <model> [effort]
   Doctor:        ai-litellm doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]
   Key:           ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]
   Sync:          ai-litellm sync          Regenerate derived configs + reload proxy from the single source
   Uninstall:     ai-litellm uninstall     Remove package directory and global shims
-  Capabilities:  ai-litellm capabilities  Proxy + runtime capability summary
 
 Reasoning effort values (not a command — pass to reasoning/harness set):
   OpenRouter none|minimal|low|medium|high|xhigh   Claude auto|low|medium|high|xhigh|max
   Codex low|medium|high|xhigh
-
-Flat forms (start, stop, status, route-info, harnesses, launch, ...) still work but
-are deprecated in favor of the groups above.
 EOF
 }
 
@@ -5788,30 +5736,12 @@ ai_litellm() {
     harness)      ai_litellm_cmd_harness "$@" ;;
     runtime)      ai_litellm_cmd_runtime "$@" ;;
     model)        ai_litellm_cmd_model "$@" ;;
-    route)        ai_litellm_cmd_route "$@" ;;
     context)      ai_litellm_cmd_context "$@" ;;
     reasoning)    ai_litellm_cmd_reasoning "$@" ;;
-    audit)        ai_litellm_cmd_audit "$@" ;;
     doctor)       ai_litellm_cmd_doctor "$@" ;;
     key)          ai_litellm_cmd_key "$@" ;;
     sync|--sync)  ai_litellm_sync "$@" ;;
     uninstall)    ai_litellm_uninstall "$@" ;;
-    capabilities|--capabilities) ai_litellm_capabilities ;;
-
-    # ── Deprecated flat aliases (still work; warn + delegate) ──
-    start|--start)               ai_litellm_deprecated start "proxy start"; ai_litellm_start ;;
-    stop|--stop)                 ai_litellm_deprecated stop "proxy stop"; ai_litellm_stop ;;
-    restart|--restart)           ai_litellm_deprecated restart "proxy restart"; ai_litellm_restart ;;
-    logs|--logs)                 ai_litellm_deprecated logs "proxy logs"; ai_litellm_logs "$@" ;;
-    --doctor)                    ai_litellm_deprecated --doctor "doctor"; ai_litellm_cmd_doctor "$@" ;;
-    list|--list)                 ai_litellm_deprecated list "model list"; ai_litellm_list ;;
-    route-info|--route-info)     ai_litellm_deprecated route-info "route info"; ai_litellm_route_info "$@" ;;
-    probe-route|--probe-route)   ai_litellm_deprecated probe-route "route probe"; ai_litellm_probe_routes "$@" ;;
-    runtime-status|--runtime-status) ai_litellm_deprecated runtime-status "runtime status"; ai_litellm_runtime_status "$@" ;;
-    harnesses|--harnesses)       ai_litellm_deprecated harnesses "harness list"; ai_litellm_harnesses ;;
-    harness-info|--harness-info) ai_litellm_deprecated harness-info "harness info"; ai_litellm_harness_info "$@" ;;
-    launch|--launch)             ai_litellm_deprecated launch "harness launch"; ai_litellm_launch "$@" ;;
-    key-status|--key-status)     ai_litellm_deprecated key-status "key status"; ai_litellm_key_status ;;
 
     *)
       echo "Unknown ai-litellm command: $cmd" >&2
@@ -5820,6 +5750,3 @@ ai_litellm() {
       ;;
   esac
 }
-
-start-litellm() { ai_litellm_start "$@"; }
-stop-litellm() { ai_litellm_stop "$@"; }

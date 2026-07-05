@@ -48,11 +48,11 @@ PY_PKG = REPO / "config"
 # lib.zsh. If they drift, the marker check below fails before any row runs.
 NODE_RANGE = (457, 523)          # node -e '<body>' in ai_litellm_harness_output_budget
 RUBY_CAT_RANGE = (551, 589)      # positive_int + pick_reservation + effective_input
-RUBY_MAT_RANGE = (4421, 4482)    # positive_int + output_budget
+RUBY_MAT_RANGE = (4412, 4473)    # positive_int + output_budget
 # 5th copy: the ruby block inside ai_litellm_context_harness_reservations_ok().
-# positive_int (5236-5241) ... output_budget (5267-5301). The intervening
-# selections() def (5243-5265) is inert here -- never called -- and harmless.
-RUBY_RES_RANGE = (5236, 5301)    # positive_int + (selections) + output_budget
+# positive_int (5227-5232) ... output_budget (5258-5292). The intervening
+# selections() def (5234-5256) is inert here -- never called -- and harmless.
+RUBY_RES_RANGE = (5227, 5292)    # positive_int + (selections) + output_budget
 
 
 # =============================================================================
@@ -458,10 +458,11 @@ def drive_python_cap(context: Any, capability: Any, *,
 # Each row: id, regime, context, capability, policy kwargs, families to apply.
 # Reservation overrides are expressed via build_policy kwargs.
 ROWS: list[dict[str, Any]] = [
-    dict(id="L1", regime="Large DeepSeek/gpt-5.4", ctx=1048576, cap=384000, families="A,B,D"),
-    dict(id="L2", regime="Large Kimi/gpt-5.4-mini", ctx=262142, cap=262142, families="A,B,D"),
-    dict(id="L3", regime="Large GLM-5.2/gpt-5.5", ctx=1048576, cap=131072, families="A,B,D"),
+    dict(id="L1", regime="Large 1048576/384000", ctx=1048576, cap=384000, families="A,B,D"),
+    dict(id="L2", regime="Large 262142/262142", ctx=262142, cap=262142, families="A,B,D"),
+    dict(id="L3", regime="Large 1048576/131072", ctx=1048576, cap=131072, families="A,B,D"),
     dict(id="L4", regime="Large cap<32000", ctx=1048576, cap=20000, families="A,B"),
+    dict(id="L5", regime="Kimi-K2.7-Code clamp (cap<reservation)", ctx=262144, cap=16384, families="A,B,D"),
     # B1/B2 do NOT hit the reservation==max_reservation edge: at ctx~72960 the
     # headroom scales to floor(ctx*0.1) so max_reservation=32896 vs reservation=
     # 32000 (896 apart). Relabeled to what they actually exercise (headroom
