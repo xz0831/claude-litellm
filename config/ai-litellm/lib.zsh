@@ -3874,13 +3874,13 @@ abort("cannot locate model_list route for #{surface} in #{config_path}") unless 
 idx_begin = lines.index { |l| l.match?(/^# BEGIN ai-litellm discovered local routes/) }
 idx_end   = lines.index { |l| l.match?(/^# END ai-litellm discovered local routes/) }
 if idx_begin && idx_end && start > idx_begin && start < idx_end
-  abort("#{surface}: discovered route — managed by runtime discovery")
+  abort("#{surface}: discovered route -- managed by runtime discovery")
 end
 
 abort("#{surface}: functional slug required by codex review") if surface == "codex-auto-review"
 
 api_key = target.dig("litellm_params", "api_key").to_s
-abort("#{surface}: local route — remove via runtime") if api_key == "none"
+abort("#{surface}: local route -- remove via runtime") if api_key == "none"
 
 # Step 3: reference checks (claude tier aliases, codex catalogEntries).
 backend = target.dig("litellm_params", "model").to_s
@@ -6136,10 +6136,25 @@ ai_litellm_cmd_context() {
   esac
 }
 
+# The reasoning matrix introspects the local LiteLLM Python runtime
+# (litellm.supports_reasoning / get_supported_openai_params). When litellm is
+# not installed -- the lightweight CI check job, or a host not yet provisioned
+# with the proxy runtime -- the matrix simply cannot render, which is not a
+# policy failure. Skip it with a note (same litellm-absence tolerance as
+# ai_litellm_doctor_reasoning_capability_truth). The user-facing
+# `reasoning matrix` command keeps its hard error for a direct, unservable request.
+ai_litellm_doctor_reasoning_matrix_check() {
+  if ! ai_litellm_litellm_python >/dev/null 2>&1; then
+    echo "skip reasoning matrix renders (LiteLLM Python runtime not available)"
+    return 0
+  fi
+  ai_litellm_doctor_check "reasoning matrix renders" ai_litellm_quiet ai_litellm_model_reasoning_table
+}
+
 ai_litellm_reasoning_doctor() {
   local failed=0
   echo "ai-litellm reasoning doctor"
-  ai_litellm_doctor_check "reasoning matrix renders" ai_litellm_quiet ai_litellm_model_reasoning_table || failed=1
+  ai_litellm_doctor_reasoning_matrix_check || failed=1
   ai_litellm_doctor_check "harness reasoning configs match descriptors" ai_litellm_doctor_reasoning_sync || failed=1
   ai_litellm_doctor_reasoning_capability_truth
   return $failed
@@ -6160,7 +6175,7 @@ ai_litellm_model_policy_audit() {
   ai_litellm_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
   ai_litellm_doctor_check "harness configs match single-source limits" ai_litellm_doctor_limit_sync || failed=1
   ai_litellm_doctor_check "context matrix renders" ai_litellm_quiet ai_litellm_context_matrix || failed=1
-  ai_litellm_doctor_check "reasoning matrix renders" ai_litellm_quiet ai_litellm_model_reasoning_table || failed=1
+  ai_litellm_doctor_reasoning_matrix_check || failed=1
   ai_litellm_context_warn_omlx_policy_cap
   ai_litellm_context_warn_owned_policy_output_source
   ai_litellm_context_warn_provider_capability_drift
