@@ -2,7 +2,7 @@
 
 > **Who this is for:** an agent (or human) who has a model — a cloud model reachable
 > via OpenRouter, or a local model served by oMLX/vLLM/Ollama — and wants to drive
-> **Claude Code or Codex** with it through `ai-litellm-fabric`.
+> **Claude Code or Codex** with it through `ai-litellm`.
 > The wiring is easy; the part that bites is **context-window and token budgeting**.
 > Get it wrong and the provider 400s on a too-large request, or the harness silently
 > truncates context and the model answers confidently from amputated history.

@@ -1,6 +1,11 @@
-# ai-litellm-fabric
+# ai-litellm
 
 Portable harness fabric for local AI agent CLIs.
+
+(The installed package directory keeps its historical name
+`~/.local/share/ai-litellm-fabric`, and the `AI_LITELLM_FABRIC_HOME` env /
+`config/ai-litellm/` layout are unchanged — only the repository is named
+`ai-litellm`.)
 
 This repository manages the wrapper layer around local agent CLIs:
 

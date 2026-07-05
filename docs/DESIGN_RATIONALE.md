@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-04
 
-이 문서는 ai-litellm-fabric의 모든 비자명한 설계 결정에 대해 **무엇을, 왜, 어떤 대안을 기각했고, 어디서 반박할 수 있는지**를 기록한다. 운영 절차는 `AI_AGENT_LITELLM_ARCHITECTURE.md`(정본 가이드)가, 경계 계약은 `README.md`가, 강제는 `scripts/check.zsh`와 doctor가 맡는다. 이 문서의 역할은 그 셋이 답하지 않는 단 하나의 질문 — "왜?" — 이다.
+이 문서는 ai-litellm(설치 패키지 디렉토리는 역사적 이름 `ai-litellm-fabric` 유지)의 모든 비자명한 설계 결정에 대해 **무엇을, 왜, 어떤 대안을 기각했고, 어디서 반박할 수 있는지**를 기록한다. 운영 절차는 `AI_AGENT_LITELLM_ARCHITECTURE.md`(정본 가이드)가, 경계 계약은 `README.md`가, 강제는 `scripts/check.zsh`와 doctor가 맡는다. 이 문서의 역할은 그 셋이 답하지 않는 단 하나의 질문 — "왜?" — 이다.
 
 읽는 법:
 
