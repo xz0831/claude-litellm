@@ -133,12 +133,21 @@ runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown Qwen3.6-
 # rewrite, keeping the routes. (Regression for the 2026-06-15 silent-wipe fix.)
 rob_port="$(python3 -c "import socket;s=socket.socket();s.bind((\"127.0.0.1\",0));print(s.getsockname()[1]);s.close()")"
 python3 -c "
-import sys,http.server
+import sys,http.server,socketserver
+# http.server.HTTPServer.server_bind() calls socket.getfqdn(host) for server_name;
+# on CI runners with slow/absent reverse DNS for 127.0.0.1 that blocks ~30s before
+# the socket starts listening, so this mock never becomes reachable and the
+# discovery-robustness assertion below fails silently. Bind without the reverse
+# lookup — server_name is unused by this throwaway mock.
+class Srv(http.server.HTTPServer):
+  def server_bind(self):
+    socketserver.TCPServer.server_bind(self)
+    self.server_name=\"127.0.0.1\"; self.server_port=self.server_address[1]
 class H(http.server.BaseHTTPRequestHandler):
   def log_message(self,*a): pass
   def do_GET(self):
     self.send_response(200); self.end_headers(); self.wfile.write(b\"GARBAGE NOT JSON\")
-http.server.HTTPServer((\"127.0.0.1\",$rob_port),H).serve_forever()
+Srv((\"127.0.0.1\",$rob_port),H).serve_forever()
 " >/dev/null 2>&1 &
 rob_mock_pid=$!
 for i in $(seq 1 20); do curl -sf --max-time 1 "http://127.0.0.1:$rob_port/v1/models" >/dev/null 2>&1 && break; sleep 0.2; done
