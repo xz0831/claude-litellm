@@ -40,7 +40,7 @@ jobs:
       - name: Install LiteLLM
         run: |
           python -m pip install --upgrade pip
-          python -m pip install 'litellm[proxy]==1.91.0'
+          python -m pip install 'litellm[proxy]==1.91.0' prisma
 
       - name: Verify LiteLLM token clamp behavior
         run: |
@@ -82,7 +82,7 @@ jobs:
       - name: Install LiteLLM
         run: |
           python -m pip install --upgrade pip
-          python -m pip install 'litellm[proxy]==1.91.0'
+          python -m pip install 'litellm[proxy]==1.91.0' prisma
 
       - name: Verify tool-call translation fidelity
         run: |

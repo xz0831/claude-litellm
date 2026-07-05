@@ -91,8 +91,10 @@ preflight() {
   done
 
   # litellm: runtime-only — note, never fatal (doctor/start enforce it at use time).
+  # 1.9x moved prisma behind the extra-proxy extra; without it the proxy 500s on
+  # unauthenticated endpoints, so install prisma alongside litellm[proxy].
   command -v litellm >/dev/null 2>&1 || \
-    echo "note: litellm not found — needed to start the proxy (python3 -m pip install 'litellm[proxy]'); install and checks proceed without it." >&2
+    echo "note: litellm not found — needed to start the proxy (python3 -m pip install 'litellm[proxy]' prisma; prisma is required for 1.9x); install and checks proceed without it." >&2
 
   (( ${#missing[@]} == 0 )) && return 0
 
