@@ -97,8 +97,11 @@ class LiveQualificationTests(unittest.TestCase):
         self.assertTrue(result["streaming_input_json_delta"])
         self.assertTrue(result["tool_result_continuation"])
         self.assertTrue(result["claude_adaptive_effort_policy"])
+        self.assertEqual(result["claude_adaptive_effort_max_tokens"], 512)
         for call in (*stream_post.call_args_list, *json_post.call_args_list):
             self.assertGreaterEqual(call.args[2]["max_tokens"], 128)
+        effort_payload = json_post.call_args_list[2].args[2]
+        self.assertEqual(effort_payload["max_tokens"], 512)
         continuation_payload = json_post.call_args_list[1].args[2]
         self.assertEqual(
             continuation_payload["messages"][1]["content"],

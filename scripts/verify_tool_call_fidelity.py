@@ -269,6 +269,7 @@ WEATHER_TOOL = {
 }
 
 LIVE_MAX_TOKENS = 128
+LIVE_ADAPTIVE_EFFORT_MAX_TOKENS = 512
 
 
 def _tool_use_block(content: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -574,18 +575,22 @@ def run_live_qualification(base: str, master_key: str, model: str) -> dict[str, 
     # adaptive/provider-default reasoning for routes with no selectable slot.
     effort_status, effort_resp = post_messages(base, master_key, {
         "model": model,
-        "max_tokens": LIVE_MAX_TOKENS,
+        # Reasoning-first models can legitimately consume the 128-token tool
+        # gate budget entirely in a thinking block. Give the real Claude Code
+        # request enough room to prove it also reaches a usable text response.
+        "max_tokens": LIVE_ADAPTIVE_EFFORT_MAX_TOKENS,
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": "high"},
         "messages": [{
             "role": "user",
-            "content": "Think as the selected provider normally would, then reply OK.",
+            "content": "Think briefly as the selected provider normally would, then reply exactly OK.",
         }],
     })
     result["claude_adaptive_effort_policy"] = bool(
         effort_status == 200 and _text_blocks(effort_resp.get("content", [])).strip()
     )
     result["claude_adaptive_effort_policy_status"] = effort_status
+    result["claude_adaptive_effort_max_tokens"] = LIVE_ADAPTIVE_EFFORT_MAX_TOKENS
 
     gates = (
         "text_sse",
