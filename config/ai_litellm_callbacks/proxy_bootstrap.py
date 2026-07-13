@@ -12,6 +12,10 @@ from __future__ import annotations
 import os
 import sys
 
+from ai_litellm_callbacks.chatgpt_stream_compat import (
+    PATCH_ACTIVE as CHATGPT_STREAM_PATCH_ACTIVE,
+    PATCH_REQUIRED as CHATGPT_STREAM_PATCH_REQUIRED,
+)
 from ai_litellm_callbacks.oauth_guard import PATCH_ACTIVE
 
 
@@ -59,6 +63,11 @@ def main() -> object:
     if PATCH_ACTIVE is not True:
         raise RuntimeError(
             "claude-litellm OAuth safety hooks are inactive; refusing to start LiteLLM"
+        )
+    if CHATGPT_STREAM_PATCH_REQUIRED and CHATGPT_STREAM_PATCH_ACTIVE is not True:
+        raise RuntimeError(
+            "claude-litellm ChatGPT stream compatibility hook is inactive; "
+            "refusing to start LiteLLM 1.92.0"
         )
 
     # Import the Click command only after Authenticator.get_access_token has

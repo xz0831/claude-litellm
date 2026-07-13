@@ -18,7 +18,10 @@
       "discoverModels": true,
       "expectedModels": [],
       "recommendedModels": [
-        "Qwen3.6-27B-omlx"
+        "Qwen3.6-27B-omlx",
+        "Qwen3.5-9B-MLX-8bit-omlx",
+        "Qwen3.5-27B-4bit-omlx",
+        "Qwen3-VL-8B-Instruct-4bit-omlx"
       ],
       "defaultModelInfo": {
         "max_input_tokens": 8192,
@@ -40,7 +43,22 @@
           "x_output_source": "owned-policy local output cap"
         }
       },
-      "litellmParamsOverrides": {},
+      "litellmParamsOverrides": {
+        "Qwen3.5*": {
+          "extra_body": {
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          }
+        },
+        "Qwen3.6*": {
+          "extra_body": {
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          }
+        }
+      },
       "managedBy": "user"
     }
   }

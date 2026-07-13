@@ -29,17 +29,23 @@ x-limits:
     x_reasoning_source: openrouter.supported_parameters
   glm52: &glm52
     max_input_tokens: 1048576
-    max_output_tokens: 1048576
+    max_output_tokens: 32768
     supports_reasoning: true
-    x_reasoning_efforts: [xhigh, high]
+    # OpenRouter currently advertises xhigh+high for GLM 5.2, but LiteLLM
+    # 1.92's Anthropic→OpenAI adapter normalizes xhigh to high before the
+    # OpenRouter request is built. Advertise only the effective wire contract.
+    x_reasoning_efforts: [high]
+    x_provider_reasoning_efforts: [xhigh, high]
+    x_reasoning_effort_ceiling: high
+    x_reasoning_transport_source: litellm-1.92-anthropic-adapter-normalizes-xhigh-max-to-high
     x_input_confidence: provider
     x_input_source: openrouter.top_provider.context_length
     x_output_confidence: provider
     x_output_source: openrouter.top_provider.max_completion_tokens
     x_reasoning_confidence: provider
-    x_reasoning_source: openrouter.supported_parameters
+    x_reasoning_source: openrouter.supported_parameters; effective effort capped by local transport
   mimo_v25: &mimo_v25
-    max_input_tokens: 32000
+    max_input_tokens: 262144
     max_output_tokens: 16384
     supports_reasoning: true
     x_reasoning_efforts: []
@@ -64,10 +70,10 @@ x-limits:
     max_input_tokens: 1050000
     max_output_tokens: 128000
     supports_reasoning: true
-    # GPT-5.4 itself reasons, but LiteLLM 1.92's chatgpt/* subscription adapter
-    # does not publish a selectable-effort capability and the production OAuth
-    # wire path has not been validated for this parameter. Refuse explicit
-    # effort instead of borrowing the OpenAI Platform API contract.
+    # GPT-5.4 itself reasons and LiteLLM 1.92's chatgpt/* adapter accepts a
+    # reasoning object, but its metadata publishes no selectable effort list
+    # and the subscription backend has not been live-measured. Refuse explicit
+    # effort until login-time qualification establishes the accepted values.
     x_reasoning_efforts: []
     x_input_confidence: provider
     x_input_source: chatgpt-oauth-model-metadata
@@ -75,7 +81,7 @@ x-limits:
     x_output_source: chatgpt-oauth-model-metadata
     x_output_enforcement: provider-natural-cap-only; chatgpt-adapter-strips-token-limit-fields
     x_reasoning_confidence: owned-policy
-    x_reasoning_source: chatgpt-oauth-selectable-effort-not-validated
+    x_reasoning_source: chatgpt-oauth-slot-present-selectable-levels-not-validated
   grok45_xai_oauth: &grok45_xai_oauth
     max_input_tokens: 500000
     max_output_tokens: 32768
@@ -135,16 +141,19 @@ model_list:
       model: openai/Qwen3.6-27B-4bit
       api_base: http://127.0.0.1:8000/v1
       api_key: none
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
     model_info: *qwen36_27b_local
 
   # Qwen3.6 35B-A3B MoE local route — Phase 0 replication arm (dense-vs-MoE under
   # identical harness guidance). Same caps as the 27B route, hence the shared anchor.
   # Name = the canonical discovered name (full model id, incl. A3B MoE marker +
   # quant), so this promoted entry and the sync-discovered route are one and the
-  # same (dedup keeps only this one). Qualified thinking-OFF: this MoE drifts
-  # off-task under the heavy harness system prompt with thinking on (per-model
-  # qualification — see the architecture guide). extra_body.chat_template_kwargs
-  # is forwarded by LiteLLM straight to oMLX.
+  # same (dedup keeps only this one). Both packaged Qwen3.6 routes are qualified
+  # thinking-OFF: with thinking enabled the forced-tool probe returned reasoning
+  # text instead of a native tool call. extra_body.chat_template_kwargs is
+  # forwarded by LiteLLM to oMLX as top-level chat_template_kwargs.
   - model_name: Qwen3.6-35B-A3B-4bit-omlx
     litellm_params:
       model: openai/Qwen3.6-35B-A3B-4bit

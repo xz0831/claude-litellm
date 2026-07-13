@@ -12,11 +12,14 @@ Claude Code
      -> xAI OAuth (`xai/*` with `use_xai_oauth`)
 ```
 
-Codex is intentionally not wrapped. Codex custom providers use the Responses
-wire protocol and require a model catalog that controls tools, streaming events,
-compaction, reasoning and multimodal capabilities. Pretending arbitrary models
-have GPT capabilities was both brittle and unsafe. Native `codex` remains
-untouched and is the supported way to use ChatGPT OAuth with the Codex product.
+Codex is intentionally not wrapped by this product. Current Codex supports
+custom model providers configured with a base URL and `wire_api="responses"`,
+so connecting another model is not fundamentally forbidden. The provider must,
+however, implement the Responses wire and the tool, streaming, reasoning,
+compaction and multimodal behavior Codex expects. That is a separate
+qualification surface from Claude Code's Anthropic Messages contract. Native
+`codex` remains untouched; this repository deliberately concentrates its test
+budget on Claude Code.
 
 ## Boundaries
 
@@ -31,17 +34,25 @@ untouched and is the supported way to use ChatGPT OAuth with the Codex product.
   overlays.
 - Provider limits are data. A configured input limit above the currently selected
   provider limit is a failing doctor condition, not an informational warning.
-- Pre-call context checks and the estimated-input cost guardrail remain active
-  for every route. Output reservation/clamping is enforceable only when the
+- Pre-call context checks conservatively count messages, system/instruction
+  text, tool schemas, tool-call arguments, requested output and tokenizer
+  headroom. A generation request without a declared context limit, or whose
+  estimated total exceeds it, is rejected before provider dispatch. This check
+  is independent of the separate estimated-cost guardrail. Output
+  reservation/clamping is enforceable only when the
   provider accepts token-limit fields. LiteLLM's ChatGPT subscription adapter
   strips those fields, so that route relies on the model's natural output cap.
 
 ## Provider classes
 
-API-key providers resolve keys when the proxy starts. The package env file and
-macOS Keychain are the supported stores; an inherited shell environment is also
-accepted for compatibility but discouraged. The wrapper scrubs those
-credentials from the Claude Code process and from tools the model launches.
+API-key providers resolve explicitly referenced keys when the proxy starts. An
+inherited shell environment is checked first, followed by the private package
+env file and macOS Keychain. Inherited values are accepted for compatibility
+but discouraged. The wrapper scrubs those
+credentials—including arbitrary variables introduced by user routes—from the
+Claude Code process and from tools the model launches. Generic routes must state
+`api_key: os.environ/NAME` or `api_key: none`; implicit provider-global keys and
+gateway-reserved credentials are rejected.
 
 That scrubbing prevents accidental propagation, not same-user access. This is a
 localhost gateway for trusted code: Claude and its tools run as the same Unix
@@ -50,6 +61,10 @@ client currently authenticates to LiteLLM with its master/admin key. Adversarial
 containment requires a separate OS account or container.
 
 Local providers use an explicit loopback `api_base` and do not require a secret.
+The public `model register` command intentionally covers this simple
+single-key/no-auth shape only; complex provider credential schemas require a
+reviewed package change. OAuth routes are package-owned, not synthesized with
+`api_key: none`.
 
 OAuth providers require an explicit login command before the proxy can route to
 them. The proxy is launched through a package bootstrap that installs the
@@ -71,17 +86,66 @@ not workers inside one claude-litellm process.
 ## Compatibility policy
 
 The pinned LiteLLM version is part of the product, not an ambient dependency.
-An upgrade requires all deterministic translation, effort, OAuth redaction and
-tool-resume tests to pass before the pin moves. Installed packages record the
-source commit and runtime versions so `doctor` can detect drift.
+`config/python-requirements.in` declares the direct runtime contract:
+LiteLLM 1.92.0, Prisma 0.15.0, and pip 26.1.2 on Python 3.13. The generated
+`config/python-requirements.lock` pins every resolved transitive dependency and
+its allowed distribution hashes; installation uses `pip --require-hashes` and
+does not perform a fresh dependency resolution. An upgrade requires all
+deterministic translation, effort, OAuth redaction and tool-resume tests to
+pass before either direct pins or their lock move.
 
-The model registry and Claude alias settings are managed but intentionally
-mutable. Their install-time SHA-256 baselines are recorded in the manifest. A
-reinstall accepts an unchanged baseline (and can apply new source defaults), but
-aborts before proxy shutdown or package mutation when user drift is detected.
-Custom routes, reasoning settings, discovered routes, and alias changes must be
-reconciled into the source checkout before upgrading; they are never silently
-overwritten.
+Installed packages record the source commit, runtime versions, dependency
+inventory, and a path/type/mode/size/byte fingerprint of `pyvenv.cfg`, the
+complete runtime `bin` tree, and every directory and file in `site-packages`.
+`__pycache__` and `.pyc` are deliberately included: `-B` prevents new bytecode
+writes but does not stop Python from loading a forged, timestamp-valid cache.
+Reuse checks and `doctor` therefore detect version drift, added paths, and
+in-place package or bytecode injection.
+
+The public shim embeds the installed manifest's SHA-256 digest. Before managed
+shell libraries, callbacks, or virtual-environment Python execute, an external
+Python 3.13 interpreter running with `-I -B -S` checks that pin, checks the
+verifier's digest from the manifest, enforces the exact package path allow-list,
+and runs the already-hashed fingerprint helper over the managed runtime. The
+managed runtime is initialized only after those checks succeed.
+
+This chain is not a code signature or a security boundary against the owner of
+the Unix account. The same user can coordinate replacement of the public shim,
+manifest, verifier, package, and runtime. It is designed to fail closed on
+accidental/partial drift and uncoordinated injection; repository checkout and
+distribution authenticity require a separate trusted-source or signing
+mechanism.
+
+Every managed Python control path runs with an isolated import search path.
+Pure runtime checks use Python isolated mode; callback loading receives only the
+hashed package config directory. The caller's current directory, user site and
+ambient `PYTHONPATH` cannot shadow LiteLLM, OAuth hooks, or their dependencies.
+
+The installed model registry and Claude settings are generated outputs.
+Immutable package inputs use `*.base` paths; durable user models, aliases and
+reasoning preferences live under `~/.config/claude-litellm` with private
+permissions. Rendering validates names, limits, endpoint schemes and secret
+references, then atomically replaces each output while holding the shared
+configuration lock. The only effective-file state
+carried forward is a structurally validated, loopback-only, runtime-owned
+discovery block; sync replaces it after successful discovery and retains it on
+runtime failure. Sync and user mutations share a configuration lock. Reinstall
+can therefore replace package defaults without erasing user choices or losing
+last-known-good local routes.
+
+Before proxy startup, both generated outputs are rendered in memory and
+compared byte-for-byte with the installed files under that same configuration
+lock. Direct edits, stale callback wiring, or half-applied alias changes fail
+closed with an instruction to run `claude-litellm sync`.
+
+One Claude process maps every tier and subagent to the initial validated route.
+This is deliberate: effort, compaction, context, and output controls are
+process-global, so an in-session cross-provider switch could retain an invalid
+budget or bypass OAuth/runtime checks. Provider changes are session boundaries.
+
+Runtime discovery currently has one generated route block and therefore allows
+only one enabled `discoverModels` runtime. Validation fails closed if multiple
+runtimes request ownership of that block.
 
 `config/ai-litellm/settings.json` (server/runtime policy) has no public mutator
 and remains package-managed. Change it in the source checkout and reinstall;

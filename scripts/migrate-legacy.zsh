@@ -467,15 +467,15 @@ verify_published_plan() {
 }
 
 assert_destination_layout_safe() {
-  local path
-  for path in \
+  local destination_path
+  for destination_path in \
     "$destination/state" \
     "$destination/state/claude-litellm" \
     "$destination/state/claude-litellm/claude-config" \
     "$destination/state/ai-litellm"; do
-    [[ -e "$path" || -L "$path" ]] || continue
-    [[ -d "$path" && ! -L "$path" ]] || {
-      echo "Migration conflict (unsafe destination path): $path" >&2
+    [[ -e "$destination_path" || -L "$destination_path" ]] || continue
+    [[ -d "$destination_path" && ! -L "$destination_path" ]] || {
+      echo "Migration conflict (unsafe destination path): $destination_path" >&2
       return 1
     }
   done

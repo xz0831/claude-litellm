@@ -1,16 +1,74 @@
 # Shared LiteLLM proxy management for local agent wrappers.
 
 export AI_LITELLM_HOME="${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/claude-litellm}"
+if [[ -f "$AI_LITELLM_HOME/install-manifest.json" && \
+      ! -L "$AI_LITELLM_HOME/install-manifest.json" ]]; then
+  # Installed mode is closed over its verified package and private state root.
+  # Caller-controlled package/config/callback/state paths would otherwise let
+  # a poisoned environment execute an unmanifested renderer or bootstrap after
+  # provider credentials have been loaded. Checkout-only tests (no manifest)
+  # retain the flexible overrides below.
+  export AI_LITELLM_INSTALLED_MODE=1
+  export AI_LITELLM_CONFIG_HOME="$AI_LITELLM_HOME/config"
+  export AI_LITELLM_STATE_HOME="$AI_LITELLM_HOME/state"
+  export AI_LITELLM_BIN_DIR="$AI_LITELLM_HOME/bin"
+  export AI_LITELLM_PROXY_HOME="$AI_LITELLM_HOME/state/ai-litellm"
+  export AI_LITELLM_BASE_CONFIG="$AI_LITELLM_HOME/config/litellm_config.base.yaml"
+  export AI_LITELLM_CONFIG="$AI_LITELLM_HOME/config/litellm_config.yaml"
+  export AI_LITELLM_BASE_CLAUDE_SETTINGS="$AI_LITELLM_HOME/config/claude-litellm/settings.base.json"
+  export AI_LITELLM_EFFECTIVE_CLAUDE_SETTINGS="$AI_LITELLM_HOME/config/claude-litellm/settings.json"
+  export AI_LITELLM_CONFIG_RENDERER="$AI_LITELLM_HOME/scripts/render-user-config.py"
+  export AI_LITELLM_QUALIFICATIONS_FILE="$AI_LITELLM_HOME/state/ai-litellm/model-qualifications.json"
+  export AI_LITELLM_SETTINGS="$AI_LITELLM_HOME/config/ai-litellm/settings.json"
+  export AI_LITELLM_HARNESSES_DIR="$AI_LITELLM_HOME/config/ai-litellm/harnesses"
+  export AI_LITELLM_ENV="$AI_LITELLM_HOME/state/ai-litellm/env"
+  export AI_LITELLM_PID_FILE="$AI_LITELLM_HOME/state/ai-litellm/litellm.pid"
+  export AI_LITELLM_LOCK_DIR="$AI_LITELLM_HOME/state/ai-litellm/litellm.lock"
+  export AI_LITELLM_LOG_FILE="$AI_LITELLM_HOME/state/ai-litellm/litellm.log"
+  export AI_LITELLM_CONFIG_HASH_FILE="$AI_LITELLM_HOME/state/ai-litellm/litellm.config.sha256"
+  export AI_LITELLM_STARTED_AT_FILE="$AI_LITELLM_HOME/state/ai-litellm/litellm.started_at"
+  export AI_LITELLM_REASONING_OBS_FILE="$AI_LITELLM_HOME/state/ai-litellm/reasoning-observations.json"
+  export AI_LITELLM_CONTEXT_OBS_SEED="$AI_LITELLM_HOME/config/ai-litellm/context-observations.json"
+  export AI_LITELLM_CONTEXT_OBS_FILE="$AI_LITELLM_HOME/state/ai-litellm/context-observations.json"
+  export AI_LITELLM_LIFECYCLE_LOCK="${AI_LITELLM_HOME:h}/.${AI_LITELLM_HOME:t}.install.lock"
+  export AI_LITELLM_LEGACY_ENV="$HOME/.config/ai-litellm/env"
+  export AI_LITELLM_LEGACY_PID_FILE="$AI_LITELLM_HOME/state/ai-litellm/.legacy-ai-litellm.pid"
+  export AI_LITELLM_LEGACY_LOG_FILE="$AI_LITELLM_HOME/state/ai-litellm/.legacy-ai-litellm.log"
+  export AI_LITELLM_LEGACY_CLAUDE_ENV="$HOME/.config/claude-litellm/env"
+  export AI_LITELLM_LEGACY_CLAUDE_PID_FILE="$AI_LITELLM_HOME/state/ai-litellm/.legacy-claude-litellm.pid"
+  export AI_LITELLM_LEGACY_CLAUDE_LOG_FILE="$AI_LITELLM_HOME/state/ai-litellm/.legacy-claude-litellm.log"
+fi
 export AI_LITELLM_CONFIG_HOME="${AI_LITELLM_CONFIG_HOME:-$AI_LITELLM_HOME/config}"
 export AI_LITELLM_STATE_HOME="${AI_LITELLM_STATE_HOME:-$AI_LITELLM_HOME/state}"
 export AI_LITELLM_BIN_DIR="${AI_LITELLM_BIN_DIR:-$AI_LITELLM_HOME/bin}"
 export AI_LITELLM_PROXY_HOME="${AI_LITELLM_PROXY_HOME:-$AI_LITELLM_STATE_HOME/ai-litellm}"
+export AI_LITELLM_USER_CONFIG_HOME="${AI_LITELLM_USER_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/claude-litellm}"
+export AI_LITELLM_USER_MODELS="${AI_LITELLM_USER_MODELS:-$AI_LITELLM_USER_CONFIG_HOME/models.json}"
+export AI_LITELLM_USER_CLAUDE_SETTINGS="${AI_LITELLM_USER_CLAUDE_SETTINGS:-$AI_LITELLM_USER_CONFIG_HOME/settings.json}"
+if [[ -z "${AI_LITELLM_BASE_CONFIG:-}" ]]; then
+  if [[ -f "$AI_LITELLM_CONFIG_HOME/litellm_config.base.yaml" ]]; then
+    export AI_LITELLM_BASE_CONFIG="$AI_LITELLM_CONFIG_HOME/litellm_config.base.yaml"
+  else
+    export AI_LITELLM_BASE_CONFIG="$AI_LITELLM_CONFIG_HOME/litellm_config.yaml"
+  fi
+fi
 export AI_LITELLM_CONFIG="${AI_LITELLM_CONFIG:-$AI_LITELLM_CONFIG_HOME/litellm_config.yaml}"
+if [[ -z "${AI_LITELLM_BASE_CLAUDE_SETTINGS:-}" ]]; then
+  if [[ -f "$AI_LITELLM_CONFIG_HOME/claude-litellm/settings.base.json" ]]; then
+    export AI_LITELLM_BASE_CLAUDE_SETTINGS="$AI_LITELLM_CONFIG_HOME/claude-litellm/settings.base.json"
+  else
+    export AI_LITELLM_BASE_CLAUDE_SETTINGS="$AI_LITELLM_CONFIG_HOME/claude-litellm/settings.json"
+  fi
+fi
+export AI_LITELLM_EFFECTIVE_CLAUDE_SETTINGS="${AI_LITELLM_EFFECTIVE_CLAUDE_SETTINGS:-$AI_LITELLM_CONFIG_HOME/claude-litellm/settings.json}"
+export AI_LITELLM_CONFIG_RENDERER="${AI_LITELLM_CONFIG_RENDERER:-$AI_LITELLM_HOME/scripts/render-user-config.py}"
+export AI_LITELLM_QUALIFICATIONS_FILE="${AI_LITELLM_QUALIFICATIONS_FILE:-$AI_LITELLM_PROXY_HOME/model-qualifications.json}"
 export AI_LITELLM_SETTINGS="${AI_LITELLM_SETTINGS:-$AI_LITELLM_CONFIG_HOME/ai-litellm/settings.json}"
 export AI_LITELLM_HARNESSES_DIR="${AI_LITELLM_HARNESSES_DIR:-$AI_LITELLM_CONFIG_HOME/ai-litellm/harnesses}"
 export AI_LITELLM_ENV="${AI_LITELLM_ENV:-$AI_LITELLM_PROXY_HOME/env}"
 export AI_LITELLM_PID_FILE="${AI_LITELLM_PID_FILE:-$AI_LITELLM_PROXY_HOME/litellm.pid}"
 export AI_LITELLM_LOCK_DIR="${AI_LITELLM_LOCK_DIR:-$AI_LITELLM_PROXY_HOME/litellm.lock}"
+export AI_LITELLM_LIFECYCLE_LOCK="${AI_LITELLM_LIFECYCLE_LOCK:-${AI_LITELLM_HOME:h}/.${AI_LITELLM_HOME:t}.install.lock}"
 export AI_LITELLM_LOG_FILE="${AI_LITELLM_LOG_FILE:-$AI_LITELLM_PROXY_HOME/litellm.log}"
 export AI_LITELLM_CONFIG_HASH_FILE="${AI_LITELLM_CONFIG_HASH_FILE:-$AI_LITELLM_PROXY_HOME/litellm.config.sha256}"
 export AI_LITELLM_STARTED_AT_FILE="${AI_LITELLM_STARTED_AT_FILE:-$AI_LITELLM_PROXY_HOME/litellm.started_at}"
@@ -29,6 +87,29 @@ export OPENROUTER_KEYCHAIN_ACCOUNT="${OPENROUTER_KEYCHAIN_ACCOUNT:-$USER}"
 export LITELLM_MASTER_KEYCHAIN_SERVICE="${LITELLM_MASTER_KEYCHAIN_SERVICE:-litellm-master-key}"
 export LITELLM_MASTER_KEYCHAIN_ACCOUNT="${LITELLM_MASTER_KEYCHAIN_ACCOUNT:-$USER}"
 
+# macOS zsh's `zsystem flock` opens an existing path; it does not create one.
+# Publish lock files safely before flocking and reject symlinks/special files.
+ai_litellm_lock_file_prepare() {
+  local lock_file="$1" parent="${1:h}"
+  if [[ -e "$parent" || -L "$parent" ]]; then
+    [[ -d "$parent" && ! -L "$parent" ]] || {
+      echo "Refusing unsafe lock parent: $parent" >&2
+      return 1
+    }
+  else
+    mkdir -p "$parent" || return 1
+  fi
+  if [[ ! -e "$lock_file" && ! -L "$lock_file" ]]; then
+    ( umask 077; set -o noclobber; : > "$lock_file" ) 2>/dev/null || true
+  fi
+  [[ -f "$lock_file" && ! -L "$lock_file" ]] || {
+    echo "Refusing unsafe lock file: $lock_file" >&2
+    return 1
+  }
+  chmod 600 "$lock_file" 2>/dev/null || return 1
+  [[ "$(stat -f %Lp "$lock_file" 2>/dev/null)" == "600" ]]
+}
+
 # Force UTF-8 for every inline Ruby invocation below. Under a C or empty locale
 # Ruby's default external encoding is US-ASCII; the em-dashes shipped in
 # litellm_config.yaml comments then make raw-line regex (sync/install route
@@ -36,7 +117,69 @@ export LITELLM_MASTER_KEYCHAIN_ACCOUNT="${LITELLM_MASTER_KEYCHAIN_ACCOUNT:-$USER
 # US-ASCII". RUBYOPT is set per-invocation via a prefix assignment and never
 # exported, so the shared-environment isolation guarantee is preserved.
 ai_litellm_ruby() {
-  RUBYOPT="-Eutf-8:utf-8${RUBYOPT:+ $RUBYOPT}" command ruby "$@"
+  (
+    unset RUBYOPT RUBYLIB RUBYPATH
+    cd /
+    RUBYOPT="-Eutf-8:utf-8" command ruby "$@"
+  )
+}
+
+# Managed Python must never inherit an import path from the repository being
+# operated on.  `-I -B` is used whenever only stdlib/site-packages are needed;
+# callback imports use a single trusted package config root with `-sP -B`.
+# Both forms run from `/` so neither the caller's cwd nor a script directory can
+# shadow LiteLLM or one of its dependencies.
+ai_litellm_python_isolated() {
+  local python="$1"
+  shift
+  (
+    unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONBREAKPOINT \
+      PYTHONUSERBASE PYTHONEXECUTABLE PYTHONWARNINGS PYTHONPLATLIBDIR \
+      PYTHONPYCACHEPREFIX
+    cd /
+    "$python" -I -B "$@"
+  )
+}
+
+# Integrity verification must never execute the runtime it is measuring.
+# Resolve a Python 3.13 target outside the managed prefix, including through a
+# venv compatibility symlink, and invoke the resolved external file directly.
+ai_litellm_external_python() {
+  local directory candidate resolved
+  local -a candidates
+  candidates=(/opt/homebrew/bin/python3.13 /usr/local/bin/python3.13)
+  for directory in ${(s/:/)PATH}; do
+    [[ -n "$directory" ]] || directory=.
+    candidates+=("$directory/python3.13")
+  done
+  for candidate in "${candidates[@]}"; do
+    [[ -x "$candidate" && -f "$candidate" ]] || continue
+    resolved="${candidate:A}"
+    case "$resolved" in
+      "$AI_LITELLM_HOME"|"$AI_LITELLM_HOME"/*) continue ;;
+    esac
+    if "$resolved" -I -B -S -c \
+      'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)' \
+      >/dev/null 2>&1; then
+      print -r -- "$resolved"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ai_litellm_python_configured() {
+  local python="$1"
+  shift
+  (
+    unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONBREAKPOINT \
+      PYTHONUSERBASE PYTHONEXECUTABLE PYTHONWARNINGS PYTHONPLATLIBDIR \
+      PYTHONPYCACHEPREFIX
+    export PYTHONPATH="$AI_LITELLM_CONFIG_HOME"
+    export PYTHONNOUSERSITE=1
+    cd /
+    "$python" -sP -B "$@"
+  )
 }
 
 ai_litellm_json_file() {
@@ -108,36 +251,276 @@ process.stdout.write(JSON.stringify(o));
 ' "$@"
 }
 
+# Credential files are integrity-sensitive even when the leaf itself is opened
+# with O_NOFOLLOW: open(2) still follows symlinks in parent components. Walk the
+# lexical directory path one component at a time and reject every untrusted
+# symlink or non-directory before opening or creating a managed env file.
+ai_litellm_credential_directory_chain_trusted() {
+  local target="${1:a}" component current="/" link_target=""
+  local -a components
+  components=("${(@s:/:)target}")
+  for component in "${components[@]}"; do
+    [[ -n "$component" ]] || continue
+    current="${current%/}/$component"
+    if [[ -L "$current" ]]; then
+      link_target="$(readlink "$current" 2>/dev/null || true)"
+      # Mirror the package-path policy: these are the only root-owned macOS
+      # compatibility aliases. TMPDIR normally starts below /var/folders.
+      # Every later/user-controlled symlink remains a hard failure.
+      case "$current:$link_target" in
+        /var:private/var|/tmp:private/tmp) ;;
+        *) return 1 ;;
+      esac
+    elif [[ -e "$current" ]]; then
+      [[ -d "$current" ]] || return 1
+    fi
+  done
+}
+
+# Create or tighten one private directory without ever chmodding a symlink
+# through its pathname. The fd validation also makes the final component check
+# apply to the object that is actually chmodded, not an earlier lstat result.
+ai_litellm_private_directory_prepare() {
+  local directory="${1:a}"
+  ai_litellm_credential_directory_chain_trusted "$directory" || return 1
+  ( umask 077; mkdir -p "$directory" ) || return 1
+  ai_litellm_credential_directory_chain_trusted "$directory" || return 1
+  node -e '
+const fs = require("fs");
+const directory = process.argv[1];
+let fd;
+try {
+  fd = fs.openSync(
+    directory,
+    fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+  );
+  const info = fs.fstatSync(fd);
+  if (!info.isDirectory()) throw new Error("not a directory");
+  fs.fchmodSync(fd, 0o700);
+  if ((fs.fstatSync(fd).mode & 0o777) !== 0o700) throw new Error("mode is not 0700");
+  fs.closeSync(fd);
+} catch (error) {
+  if (fd !== undefined) {
+    try { fs.closeSync(fd); } catch (_) {}
+  }
+  console.error(`Refusing unsafe private directory: ${directory}`);
+  process.exit(1);
+}
+' "$directory"
+}
+
+ai_litellm_private_state_leaf_safe() {
+  local state_path="${1:a}"
+  ai_litellm_credential_directory_chain_trusted "${state_path:h}" || return 1
+  node -e '
+const fs = require("fs");
+const path = process.argv[1];
+try {
+  const info = fs.lstatSync(path);
+  if (info.isSymbolicLink() || !info.isFile()) process.exit(1);
+} catch (error) {
+  if (error.code !== "ENOENT") process.exit(1);
+}
+' "$state_path"
+}
+
+# Atomic private state writer. Content arrives on stdin, never argv. The
+# random exclusive/no-follow staging file and directory fsync make PID/hash/
+# timestamp publication resistant to symlink planting and partial writes.
+ai_litellm_atomic_private_write() {
+  local target_path="${1:a}"
+  ai_litellm_credential_directory_chain_trusted "${target_path:h}" || return 1
+  node -e '
+const crypto = require("crypto");
+const fs = require("fs");
+const p = require("path");
+const target = process.argv[1];
+const content = fs.readFileSync(0);
+const staged = `${target}.tmp.${process.pid}.${crypto.randomBytes(16).toString("hex")}`;
+let fd;
+let dirfd;
+try {
+  try {
+    const current = fs.lstatSync(target);
+    if (current.isSymbolicLink() || !current.isFile()) throw new Error("unsafe target");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  fd = fs.openSync(
+    staged,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+    0o600,
+  );
+  fs.fchmodSync(fd, 0o600);
+  fs.writeFileSync(fd, content);
+  fs.fsyncSync(fd);
+  fs.closeSync(fd);
+  fd = undefined;
+  fs.renameSync(staged, target);
+  dirfd = fs.openSync(p.dirname(target), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  fs.fsyncSync(dirfd);
+  fs.closeSync(dirfd);
+  dirfd = undefined;
+} catch (error) {
+  if (fd !== undefined) try { fs.closeSync(fd); } catch (_) {}
+  if (dirfd !== undefined) try { fs.closeSync(dirfd); } catch (_) {}
+  try { fs.unlinkSync(staged); } catch (_) {}
+  process.exit(1);
+}
+' "$target_path"
+}
+
+ai_litellm_proxy_state_paths_safe() {
+  local state_path
+  ai_litellm_private_directory_prepare "$AI_LITELLM_STATE_HOME" || return 1
+  ai_litellm_private_directory_prepare "$AI_LITELLM_PROXY_HOME" || return 1
+  for state_path in "$AI_LITELLM_LOG_FILE" "$AI_LITELLM_PID_FILE" \
+    "$AI_LITELLM_CONFIG_HASH_FILE" "$AI_LITELLM_STARTED_AT_FILE"; do
+    [[ "${state_path:h:A}" == "${AI_LITELLM_PROXY_HOME:A}" ]] || return 1
+    ai_litellm_private_state_leaf_safe "$state_path" || {
+      echo "Refusing unsafe proxy state path: $state_path" >&2
+      return 1
+    }
+  done
+}
+
+# User model/settings overlays are writable state. Keep both below one trusted
+# lexical root and reject symlinks in the root, any nested parent, or either
+# leaf before a lock holder or renderer can touch them.
+ai_litellm_user_config_paths_trusted() {
+  local root="${AI_LITELLM_USER_CONFIG_HOME:a}"
+  local models="${AI_LITELLM_USER_MODELS:a}"
+  local settings="${AI_LITELLM_USER_CLAUDE_SETTINGS:a}"
+  local config_path
+
+  [[ "$models" == "$root"/* && "$settings" == "$root"/* ]] || {
+    echo "Refusing user configuration path outside $root" >&2
+    return 1
+  }
+  ai_litellm_credential_directory_chain_trusted "$root" || {
+    echo "Refusing unsafe user configuration directory: $root" >&2
+    return 1
+  }
+  for config_path in "$models" "$settings"; do
+    ai_litellm_credential_directory_chain_trusted "${config_path:h}" || {
+      echo "Refusing unsafe user configuration parent: ${config_path:h}" >&2
+      return 1
+    }
+    if [[ -e "$config_path" || -L "$config_path" ]]; then
+      [[ -f "$config_path" && ! -L "$config_path" && \
+         "$(stat -f %Lp "$config_path" 2>/dev/null)" == "600" ]] || {
+        echo "Refusing unsafe user configuration file: $config_path" >&2
+        return 1
+      }
+    fi
+  done
+}
+
+ai_litellm_user_config_paths_prepare() {
+  ai_litellm_user_config_paths_trusted || return 1
+  ai_litellm_private_directory_prepare "$AI_LITELLM_USER_CONFIG_HOME" || return 1
+  ai_litellm_user_config_paths_trusted
+}
+
+ai_litellm_credential_env_path_trusted() {
+  local role="$1" env_file="${2:a}" trusted_root
+  local package_home="${AI_LITELLM_HOME:a}"
+  local state_home="${AI_LITELLM_STATE_HOME:a}"
+  local proxy_home="${AI_LITELLM_PROXY_HOME:a}"
+
+  case "$role" in
+    primary)
+      [[ "$state_home" == "$package_home"/* && \
+         "$proxy_home" == "$state_home"/* && \
+         "$env_file" == "$proxy_home"/* ]] || return 1
+      trusted_root="${env_file:h}"
+      ;;
+    legacy-ai-litellm)
+      trusted_root="${HOME:a}/.config/ai-litellm"
+      [[ "$env_file" == "$trusted_root/env" ]] || return 1
+      ;;
+    legacy-claude-litellm)
+      trusted_root="${HOME:a}/.config/claude-litellm"
+      [[ "$env_file" == "$trusted_root/env" ]] || return 1
+      ;;
+    *) return 1 ;;
+  esac
+
+  ai_litellm_credential_directory_chain_trusted "$trusted_root"
+}
+
 ai_litellm_env_value() {
   local key="$1"
-  local env_file
-  for env_file in "$AI_LITELLM_ENV" "$AI_LITELLM_LEGACY_ENV" "$AI_LITELLM_LEGACY_CLAUDE_ENV"; do
-    [[ -f "$env_file" ]] || continue
+  [[ "$key" =~ '^[A-Za-z_][A-Za-z0-9_]*$' ]] || {
+    echo "Invalid env key: $key" >&2
+    return 1
+  }
+
+  local env_file role rc index
+  local -a env_files env_roles
+  env_files=("$AI_LITELLM_ENV" "$AI_LITELLM_LEGACY_ENV" "$AI_LITELLM_LEGACY_CLAUDE_ENV")
+  env_roles=(primary legacy-ai-litellm legacy-claude-litellm)
+  for index in {1..3}; do
+    env_file="${env_files[$index]}"
+    role="${env_roles[$index]}"
+    [[ -e "$env_file" || -L "$env_file" ]] || continue
+    ai_litellm_credential_env_path_trusted "$role" "$env_file" || {
+      echo "Refusing credential file with an unsafe parent chain: $env_file" >&2
+      return 1
+    }
     node -e '
 const fs = require("fs");
 const file = process.argv[1];
 const wanted = process.argv[2];
-const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
-for (let line of lines) {
-  line = line.trim();
-  if (!line || line.startsWith("#")) continue;
-  if (line.startsWith("export ")) line = line.slice("export ".length).trimStart();
-  const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-  if (!match || match[1] !== wanted) continue;
-  let value = match[2];
-  if (
-    value.length >= 2 &&
-    ((value.startsWith("\"") && value.endsWith("\"")) ||
-     (value.startsWith("'") && value.endsWith("'")))
-  ) {
-    value = value.slice(1, -1);
+let fd;
+try {
+  // O_NOFOLLOW closes the lstat/open race on the credential leaf. Validate the
+  // opened descriptor rather than trusting path metadata checked earlier.
+  fd = fs.openSync(
+    file,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  const info = fs.fstatSync(fd);
+  if (!info.isFile() || (info.mode & 0o777) !== 0o600) {
+    console.error(`Refusing unsafe credential file (expected regular mode 0600): ${file}`);
+    process.exit(2);
   }
-  if (!value) process.exit(1);
-  console.log(value);
+} catch (error) {
+  console.error(`Refusing unsafe credential file: ${file}`);
+  process.exit(2);
+}
+let lines;
+try {
+  lines = fs.readFileSync(fd, "utf8").split(/\r?\n/);
+  fs.closeSync(fd);
+} catch (error) {
+  if (fd !== undefined) {
+    try { fs.closeSync(fd); } catch (_) {}
+  }
+  console.error(`Cannot read credential file: ${file}`);
+  process.exit(2);
+}
+for (const line of lines) {
+  if (!line.trim() || /^\s*#/.test(line)) continue;
+  // This is a key/value data file, not shell source. Preserve every byte after
+  // the first '=' (including quotes and leading/trailing spaces). `export` is
+  // accepted only as a legacy line prefix; it is never evaluated.
+  const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+  if (!match || match[1] !== wanted) continue;
+  const value = match[2];
+  if (!value) process.exit(3);
+  process.stdout.write(value + "\n");
   process.exit(0);
 }
-process.exit(1);
+// Exit 3 is the sole non-integrity miss. The caller may consult a lower-
+// priority legacy file only for this explicit "key absent" result.
+process.exit(3);
 ' "$env_file" "$key" && return 0
+    rc=$?
+    (( rc == 3 )) && continue
+    # An existing candidate that cannot be opened, validated, or parsed is an
+    # integrity error. Never silently fall back to a lower-priority credential.
+    return 1
   done
   return 1
 }
@@ -167,8 +550,18 @@ ai_litellm_env_set_value() {
     return 1
   fi
 
-  mkdir -p "$AI_LITELLM_PROXY_HOME"
-  chmod 700 "$AI_LITELLM_PROXY_HOME"
+  ai_litellm_credential_env_path_trusted primary "$AI_LITELLM_ENV" || {
+    echo "Refusing credential file with an unsafe parent chain: $AI_LITELLM_ENV" >&2
+    return 1
+  }
+  ai_litellm_private_directory_prepare "$AI_LITELLM_STATE_HOME" || return 1
+  ai_litellm_private_directory_prepare "$AI_LITELLM_PROXY_HOME" || return 1
+  # Revalidate after mkdir so a concurrently materialized component cannot be
+  # used without passing the same no-symlink policy.
+  ai_litellm_credential_env_path_trusted primary "$AI_LITELLM_ENV" || {
+    echo "Refusing credential file with an unsafe parent chain: $AI_LITELLM_ENV" >&2
+    return 1
+  }
   # Pass the secret to node via stdin, NOT as argv — argv is visible via `ps`.
   printf '%s' "$value" | node -e '
 const fs = require("fs");
@@ -177,10 +570,29 @@ const value = fs.readFileSync(0, "utf8");
 if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`invalid env key: ${key}`);
 if (/[\r\n]/.test(value)) throw new Error(`env value for ${key} contains a newline`);
 let lines = [];
+let sourceFd;
 try {
-  lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+  sourceFd = fs.openSync(
+    file,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  const sourceInfo = fs.fstatSync(sourceFd);
+  if (!sourceInfo.isFile() || (sourceInfo.mode & 0o777) !== 0o600) {
+    throw new Error("existing credential file is not a private regular file");
+  }
+  lines = fs.readFileSync(sourceFd, "utf8").split(/\r?\n/);
+  fs.closeSync(sourceFd);
+  sourceFd = undefined;
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
-} catch (_) {}
+} catch (error) {
+  if (sourceFd !== undefined) {
+    try { fs.closeSync(sourceFd); } catch (_) {}
+  }
+  if (error.code !== "ENOENT") {
+    console.error(`Refusing unsafe existing credential file: ${file}`);
+    process.exit(2);
+  }
+}
 let replaced = false;
 const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const pattern = new RegExp(`^(\\s*(?:export\\s+)?)${escaped}=.*$`);
@@ -192,10 +604,27 @@ lines = lines.map((line) => {
 });
 if (!replaced) lines.push(`${key}=${value}`);
 const tmp = `${file}.tmp.${process.pid}`;
-fs.writeFileSync(tmp, lines.join("\n") + "\n", {mode: 0o600});
-fs.renameSync(tmp, file);
+let tmpFd;
+try {
+  tmpFd = fs.openSync(
+    tmp,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+    0o600,
+  );
+  fs.fchmodSync(tmpFd, 0o600);
+  fs.writeFileSync(tmpFd, lines.join("\n") + "\n", "utf8");
+  fs.fsyncSync(tmpFd);
+  fs.closeSync(tmpFd);
+  tmpFd = undefined;
+  fs.renameSync(tmp, file);
+} catch (error) {
+  if (tmpFd !== undefined) {
+    try { fs.closeSync(tmpFd); } catch (_) {}
+  }
+  try { fs.unlinkSync(tmp); } catch (_) {}
+  throw error;
+}
 ' "$AI_LITELLM_ENV" "$key" || return $?
-  chmod 600 "$AI_LITELLM_ENV"
 }
 
 ai_litellm_keychain_value() {
@@ -256,13 +685,32 @@ ai_litellm_keychain_set_value() {
     return 1
   fi
 
-  # Feed the secret to security(1) via stdin, NOT as `-w <value>` argv — argv is
-  # visible to other same-user processes via `ps`, which would undo the dash's
-  # stdin-masking design. `-w` with no inline value prompts for the password and
-  # a retype, so we send the value twice. (Verified on macOS: stores correctly,
-  # including the -U overwrite path.)
-  printf '%s\n%s\n' "$value" "$value" | \
-    security add-generic-password -U -s "$service" -a "$account" -w >/dev/null
+  # `security add-generic-password ... -w` does NOT read a password from stdin;
+  # with no inline argument it opens a terminal prompt. Passing `-w <value>` or
+  # `-X <hex>` directly would expose the credential in `ps`. Use security's
+  # command-stdin mode instead: only `security -i` appears in argv, while the
+  # command and hex-encoded credential travel through the pipe.
+  #
+  # macOS security(1) reports non-ASCII generic-password data as hex on a later
+  # `find ... -w`, so fail explicitly instead of storing a value that this
+  # gateway cannot round-trip. Provider API keys/tokens are printable ASCII;
+  # use the private env file for any other byte format.
+  local hex byte offset decimal
+  hex="$(printf '%s' "$value" | od -An -v -tx1 | tr -d '[:space:]')" || return $?
+  [[ -n "$hex" && "$hex" != *[^0-9a-f]* && $(( ${#hex} % 2 )) -eq 0 ]] || {
+    echo "Could not encode the Keychain value safely." >&2
+    return 1
+  }
+  for (( offset = 1; offset <= ${#hex}; offset += 2 )); do
+    byte="${hex[$offset,$(( offset + 1 ))]}"
+    decimal=$(( 16#$byte ))
+    if (( decimal < 32 || decimal > 126 )); then
+      echo "Keychain values must be printable ASCII; use --env-file for other bytes." >&2
+      return 1
+    fi
+  done
+  printf 'add-generic-password -U -s %q -a %q -X %s\n' \
+    "$service" "$account" "$hex" | security -i >/dev/null
 }
 
 ai_litellm_openrouter_key() {
@@ -318,7 +766,14 @@ ai_litellm_curl_auth() {
   local master_key="$1"
   shift
   if [[ -n "$master_key" ]]; then
-    printf 'header = "Authorization: Bearer %s"\n' "$master_key" | curl -K - "$@"
+    if [[ "$master_key" == *$'\n'* || "$master_key" == *$'\r'* ]]; then
+      echo "Refusing a LiteLLM master key containing a newline." >&2
+      return 1
+    fi
+    # Read one raw header from stdin. Unlike `curl -K -`, this needs no config
+    # quoting and cannot interpret quotes/backslashes in the key as directives;
+    # unlike `-H <value>`, the credential never appears in process argv.
+    printf 'Authorization: Bearer %s\n' "$master_key" | curl -H @- "$@"
   else
     curl "$@"
   fi
@@ -396,6 +851,25 @@ puts value
 }
 
 ai_litellm_litellm_python() {
+  local managed="$AI_LITELLM_HOME/runtime/venv/bin/python"
+  if [[ -x "$managed" ]] && ai_litellm_python_isolated "$managed" -c '
+import importlib.metadata as metadata, sys
+assert sys.version_info[:2] == (3, 13)
+assert metadata.version("litellm") == "1.92.0"
+assert metadata.version("prisma") == "0.15.0"
+import fastapi, litellm, prisma, uvicorn, yaml
+import litellm.proxy.proxy_cli
+' >/dev/null 2>&1; then
+    printf '%s\n' "$managed"
+    return 0
+  fi
+
+  # An installed product is pinned and fail-closed. Never let a damaged venv
+  # silently switch to an unrelated ambient LiteLLM/Python implementation.
+  if [[ -e "$AI_LITELLM_HOME/install-manifest.json" || -L "$AI_LITELLM_HOME/install-manifest.json" ]]; then
+    return 1
+  fi
+
   local litellm_bin shebang python_candidate
   litellm_bin="$(command -v litellm 2>/dev/null)" || return 1
   if [[ -f "$litellm_bin" ]]; then
@@ -410,12 +884,79 @@ ai_litellm_litellm_python() {
     fi
   fi
 
-  if python3 -c 'import litellm' >/dev/null 2>&1; then
+  if python3 -I -B -c 'import litellm' >/dev/null 2>&1; then
     printf 'python3\n'
     return 0
   fi
 
   return 1
+}
+
+# Combine package-owned defaults with durable user-owned model and Claude alias
+# overlays. Installed packages keep the immutable inputs as *.base files and
+# expose generated effective files at the historical paths consumed by LiteLLM
+# and Claude Code. A checkout has no *.base files; it may validate defaults but
+# must never apply a user's installed overlays into source-controlled files.
+ai_litellm_render_user_config() {
+  local mode="${1:-}"
+  case "$mode" in
+    ""|--check|--validate-only) ;;
+    *) echo "Unknown user-config render mode: $mode" >&2; return 1 ;;
+  esac
+  ai_litellm_user_config_paths_trusted || return 1
+
+  if [[ "$AI_LITELLM_BASE_CONFIG" == "$AI_LITELLM_CONFIG" || \
+        "$AI_LITELLM_BASE_CLAUDE_SETTINGS" == "$AI_LITELLM_EFFECTIVE_CLAUDE_SETTINGS" ]]; then
+    if [[ -f "$AI_LITELLM_USER_MODELS" || -f "$AI_LITELLM_USER_CLAUDE_SETTINGS" ]]; then
+      echo "User overlays require an installed claude-litellm package; refusing to render them into source defaults." >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  [[ -f "$AI_LITELLM_BASE_CONFIG" ]] || {
+    echo "Missing package base model config: $AI_LITELLM_BASE_CONFIG" >&2
+    return 1
+  }
+  [[ -f "$AI_LITELLM_BASE_CLAUDE_SETTINGS" ]] || {
+    echo "Missing package base Claude settings: $AI_LITELLM_BASE_CLAUDE_SETTINGS" >&2
+    return 1
+  }
+  [[ -f "$AI_LITELLM_CONFIG_RENDERER" ]] || {
+    echo "Missing user config renderer: $AI_LITELLM_CONFIG_RENDERER" >&2
+    return 1
+  }
+
+  local python
+  python="$(ai_litellm_litellm_python 2>/dev/null)" || {
+    echo "Missing managed LiteLLM Python runtime; reinstall claude-litellm." >&2
+    return 1
+  }
+  local -a args
+  args=(
+    "$AI_LITELLM_CONFIG_RENDERER"
+    --base-config "$AI_LITELLM_BASE_CONFIG"
+    --effective-config "$AI_LITELLM_CONFIG"
+    --user-models "$AI_LITELLM_USER_MODELS"
+    --base-settings "$AI_LITELLM_BASE_CLAUDE_SETTINGS"
+    --effective-settings "$AI_LITELLM_EFFECTIVE_CLAUDE_SETTINGS"
+    --settings-override "$AI_LITELLM_USER_CLAUDE_SETTINGS"
+  )
+  [[ -n "$mode" ]] && args+=("$mode")
+  ai_litellm_python_isolated "$python" "${args[@]}"
+}
+
+# Compare both generated effective files with the deterministic render while no
+# model/alias writer can interleave the two reads.  A sync that already owns the
+# mutation lock may call the start path recursively, so retain its lock instead
+# of releasing a descriptor owned by the caller.
+ai_litellm_effective_config_current() {
+  local preowned=0 rc=0
+  [[ "${AI_LITELLM_USER_MUTATION_FD:-}" == <-> ]] && preowned=1
+  ai_litellm_user_mutation_lock_acquire || return 1
+  ai_litellm_render_user_config --check >/dev/null || rc=$?
+  (( preowned )) || ai_litellm_user_mutation_lock_release
+  return $rc
 }
 
 # Resolve the per-model token limits from the single source (litellm_config.yaml
@@ -542,9 +1083,16 @@ puts JSON.generate(out)
 
 ai_litellm_harness_descriptor() {
   local harness="$1"
-  local path="$AI_LITELLM_HARNESSES_DIR/$harness.json"
-  [[ -f "$path" ]] || return 1
-  printf '%s\n' "$path"
+  case "$harness" in
+    ""|*[!A-Za-z0-9_-]*|[-_]*) return 1 ;;
+  esac
+  if [[ "${AI_LITELLM_INSTALLED_MODE:-0}" == "1" && "$harness" != "claude" ]]; then
+    return 1
+  fi
+  local descriptor_path="$AI_LITELLM_HARNESSES_DIR/$harness.json"
+  [[ "${descriptor_path:h:A}" == "${AI_LITELLM_HARNESSES_DIR:A}" ]] || return 1
+  [[ -f "$descriptor_path" && ! -L "$descriptor_path" ]] || return 1
+  printf '%s\n' "$descriptor_path"
 }
 
 ai_litellm_harness_json() {
@@ -552,6 +1100,30 @@ ai_litellm_harness_json() {
   local json_path="$2"
   local descriptor
   descriptor="$(ai_litellm_harness_descriptor "$harness")" || return 1
+  if [[ "$harness" == "claude" && "$json_path" == "adapterConfig.reasoning.effort" && \
+        -e "$AI_LITELLM_USER_CLAUDE_SETTINGS" ]]; then
+    local override rc
+    override="$(node -e '
+const fs = require("fs");
+const file = process.argv[1];
+const stat = fs.lstatSync(file);
+if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) {
+  console.error(`Unsafe Claude user override: ${file}`);
+  process.exit(1);
+}
+const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+const value = payload?.harness?.reasoningEffort;
+if (typeof value !== "string" || !value) process.exit(2);
+process.stdout.write(value);
+' "$AI_LITELLM_USER_CLAUDE_SETTINGS")"
+    rc=$?
+    if (( rc == 0 )); then
+      printf '%s\n' "$override"
+      return 0
+    elif (( rc != 2 )); then
+      return $rc
+    fi
+  fi
   ai_litellm_json_file "$descriptor" "$json_path"
 }
 
@@ -594,23 +1166,75 @@ ai_litellm_harness_alias_set() {
   # path (run-from-checkout footgun). The token is __AI_LITELLM_HOME__, never __HOME__,
   # so this can never resolve to a native harness config.
   ai_litellm_assert_rendered_path "$settings" "harness settings" || return $?
+  if [[ "$harness" != "claude" ]]; then
+    echo "User alias overlays are currently supported only for the Claude harness." >&2
+    return 1
+  fi
+  case "$tier" in
+    fable|opus|sonnet|haiku) ;;
+    *) echo "Unknown Claude tier: $tier" >&2; return 1 ;;
+  esac
+  if [[ -e "$AI_LITELLM_USER_CLAUDE_SETTINGS" && \
+        ( ! -f "$AI_LITELLM_USER_CLAUDE_SETTINGS" || -L "$AI_LITELLM_USER_CLAUDE_SETTINGS" ) ]]; then
+    echo "Refusing unsafe Claude settings override path: $AI_LITELLM_USER_CLAUDE_SETTINGS" >&2
+    return 1
+  fi
+  local owns_lock=0 lock_path="$AI_LITELLM_USER_CONFIG_HOME/.mutation.lock"
+  if [[ ! -d "$lock_path" || "$(<"$lock_path/pid" 2>/dev/null || true)" != "$$" ]]; then
+    ai_litellm_user_mutation_lock_acquire || return 1
+    owns_lock=1
+  fi
+  local backup existed=0 rc=0
+  backup="$(mktemp "${TMPDIR:-/tmp}/claude-litellm-alias.json.XXXXXX")" || {
+    (( owns_lock )) && ai_litellm_user_mutation_lock_release
+    return 1
+  }
+  if [[ -f "$AI_LITELLM_USER_CLAUDE_SETTINGS" ]]; then
+    cp -p "$AI_LITELLM_USER_CLAUDE_SETTINGS" "$backup"
+    existed=1
+  fi
   ai_litellm_ruby -rjson -ryaml -e '# encoding: utf-8
-    config_path, settings_path, tier, model = ARGV
+    config_path, settings_path, override_path, tier, model = ARGV
     settings = JSON.parse(File.read(settings_path))
     cfg = (YAML.load_file(config_path, aliases: true) rescue YAML.load_file(config_path)) rescue {"model_list"=>[]}
     entry = Array(cfg["model_list"]).find { |e| e["model_name"].to_s == model }
     abort("Unknown LiteLLM model_name: #{model}") unless entry
     backend = entry.dig("litellm_params", "model").to_s
     provider = backend.split("/", 2).first
-    (settings["aliases"] ||= {})[tier] = model
+    payload = if File.file?(override_path)
+      JSON.parse(File.read(override_path))
+    else
+      {"schemaVersion" => 1, "settings" => {}}
+    end
+    abort("unsupported Claude settings override schemaVersion") unless payload.fetch("schemaVersion", 1) == 1
+    overrides = (payload["settings"] ||= {})
+    (overrides["aliases"] ||= {})[tier] = model
     name, _sep, suffix = model.rpartition("-")
     name = model if name.empty?      # model_name without a trailing -<x>
     label = "#{name} (#{suffix.empty? ? provider : suffix})"
-    (settings["displayNames"] ||= {})[tier] = label
-    tmp = "#{settings_path}.tmp.#{$$}"
-    File.write(tmp, JSON.pretty_generate(settings) + "\n")
-    File.rename(tmp, settings_path)
-  ' "$AI_LITELLM_CONFIG" "$settings" "$tier" "$model" || return $?
+    (overrides["displayNames"] ||= {})[tier] = label
+    tmp = "#{override_path}.tmp.#{$$}"
+    begin
+      File.open(tmp, File::WRONLY | File::CREAT | File::EXCL, 0o600) do |file|
+        file.write(JSON.pretty_generate(payload) + "\n")
+        file.flush
+        file.fsync
+      end
+      File.rename(tmp, override_path)
+    ensure
+      File.delete(tmp) if File.exist?(tmp)
+    end
+  ' "$AI_LITELLM_CONFIG" "$settings" "$AI_LITELLM_USER_CLAUDE_SETTINGS" "$tier" "$model" || rc=$?
+  if (( rc == 0 )); then
+    ai_litellm_render_user_config >/dev/null || rc=$?
+  fi
+  if (( rc != 0 )); then
+    (( existed )) && cp -p "$backup" "$AI_LITELLM_USER_CLAUDE_SETTINGS" || rm -f "$AI_LITELLM_USER_CLAUDE_SETTINGS"
+    ai_litellm_render_user_config >/dev/null 2>&1 || true
+  fi
+  rm -f "$backup"
+  (( owns_lock )) && ai_litellm_user_mutation_lock_release
+  (( rc == 0 )) || return $rc
   echo "Set $harness $tier -> $model"
   echo "Run 'claude-litellm sync' to apply it to the running proxy."
 }
@@ -635,13 +1259,13 @@ ai_litellm_harness_names() {
 # The marker patterns are assembled from fragments on purpose: install.zsh would
 # otherwise render the literal tokens in this very function and defeat the guard.
 ai_litellm_assert_rendered_path() {
-  local path="$1" context="${2:-path}"
+  local candidate_path="$1" context="${2:-path}"
   local us="__" home_marker fabric_marker
   home_marker="${us}HOME${us}"
   fabric_marker="${us}AI_LITELLM_HOME${us}"
-  case "$path" in
+  case "$candidate_path" in
   *"$fabric_marker"*|*"$home_marker"*)
-    echo "claude-litellm: refusing to create un-rendered ${context}: ${path}" >&2
+    echo "claude-litellm: refusing to create un-rendered ${context}: ${candidate_path}" >&2
     echo "  A command was likely run from a source checkout instead of the installed package;" >&2
     echo "  run scripts/install.zsh and use the installed command under ~/.local/bin." >&2
     return 1
@@ -774,13 +1398,50 @@ seen.keys.sort.each { |k| puts k }
 ' "$AI_LITELLM_CONFIG"
 }
 
+ai_litellm_model_env_refs() {
+  local model="$1"
+  ai_litellm_ruby -ryaml -e '
+config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
+entry = Array(config["model_list"]).find { |row| row["model_name"].to_s == ARGV[1] }
+exit 1 unless entry
+seen = {}
+walk = nil
+walk = lambda do |value|
+  case value
+  when Hash then value.each_value { |child| walk.call(child) }
+  when Array then value.each { |child| walk.call(child) }
+  when String then seen[$1] = true if value =~ %r{\Aos\.environ/([A-Za-z_][A-Za-z0-9_]*)\z}
+  end
+end
+walk.call(entry["litellm_params"] || {})
+seen.keys.sort.each { |name| puts name }
+' "$AI_LITELLM_CONFIG" "$model"
+}
+
+ai_litellm_model_provider_credentials_ready() {
+  local model="$1" env_name
+  for env_name in "${(@f)$(ai_litellm_model_env_refs "$model" 2>/dev/null)}"; do
+    [[ -n "$env_name" ]] || continue
+    case "$env_name" in LITELLM_MASTER_KEY) continue ;; esac
+    if ! ai_litellm_resolve_secret_var "$env_name" >/dev/null 2>&1; then
+      echo "Missing provider credential $env_name for $model." >&2
+      echo "Store it with: claude-litellm key set --keychain $env_name" >&2
+      return 1
+    fi
+  done
+}
+
 # Resolve a provider secret env var without exporting it to the interactive shell.
-# Order: private env file, then macOS Keychain. Keychain service defaults to the
+# Order: inherited shell env, private env file, then macOS Keychain. Keychain service defaults to the
 # downcased dash form (OPENAI_API_KEY -> openai-api-key); override per var via
 # settings.json secrets.<VAR>.{keychainService,keychainAccount}.
 ai_litellm_resolve_secret_var() {
   local var="$1"
   [[ -n "$var" ]] || return 1
+  if [[ -n "${parameters[$var]:-}" ]]; then
+    local inherited="${(P)var}"
+    [[ -n "$inherited" ]] && { printf '%s\n' "$inherited"; return 0; }
+  fi
   ai_litellm_env_value "$var" 2>/dev/null && return 0
   local service account
   service="$(ai_litellm_json "secrets.$var.keychainService" 2>/dev/null || true)"
@@ -809,24 +1470,88 @@ ai_litellm_harness_exec_env() {
   local harness="$1"
   shift
 
-  local -a env_args
-  env_args=(env)
-
-  local scrub
-  for scrub in "${(@f)$(ai_litellm_harness_json_array "$harness" isolation.scrubEnv 2>/dev/null)}"; do
-    [[ -n "$scrub" ]] && env_args+=(-u "$scrub")
+  local -a scrub_names assignment_names assignment_values
+  local scrub seen_scrubs=$'\n' static_scrubs
+  static_scrubs="$(ai_litellm_harness_json_array "$harness" isolation.scrubEnv 2>/dev/null)" || {
+    echo "Cannot read environment scrub policy for harness: $harness" >&2
+    return 1
+  }
+  for scrub in "${(@f)static_scrubs}"; do
+    [[ -n "$scrub" ]] || continue
+    [[ "$scrub" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+      echo "Invalid environment name in harness scrub policy: $scrub" >&2
+      return 1
+    }
+    if [[ "$seen_scrubs" != *$'\n'"$scrub"$'\n'* ]]; then
+      scrub_names+=("$scrub")
+      seen_scrubs+="$scrub"$'\n'
+    fi
   done
 
+  # User-registered providers can name arbitrary credential variables. Scrub
+  # every credential reference in the effective registry from Claude Code and
+  # all tools it launches, not only the static well-known provider list. A
+  # malformed/unreadable registry fails closed instead of silently producing an
+  # empty dynamic scrub list.
+  local dynamic_scrubs
+  dynamic_scrubs="$(ai_litellm_config_env_refs 2>/dev/null)" || {
+    echo "Cannot derive provider credential scrub policy from the model registry." >&2
+    return 1
+  }
+  for scrub in "${(@f)dynamic_scrubs}"; do
+    [[ -n "$scrub" ]] || continue
+    [[ "$scrub" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+      echo "Invalid environment name in model registry: $scrub" >&2
+      return 1
+    }
+    if [[ "$seen_scrubs" != *$'\n'"$scrub"$'\n'* ]]; then
+      scrub_names+=("$scrub")
+      seen_scrubs+="$scrub"$'\n'
+    fi
+  done
+
+  local assignment name value
   while (( $# > 0 )); do
     if [[ "$1" == "--" ]]; then
       shift
       break
     fi
-    env_args+=("$1")
+    assignment="$1"
+    [[ "$assignment" == *=* ]] || {
+      echo "Invalid harness environment assignment (expected NAME=value): $assignment" >&2
+      return 1
+    }
+    name="${assignment%%=*}"
+    value="${assignment#*=}"
+    [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+      echo "Invalid harness environment assignment name: $name" >&2
+      return 1
+    }
+    assignment_names+=("$name")
+    assignment_values+=("$value")
     shift
   done
 
-  "${env_args[@]}" "$@"
+  (( $# > 0 )) || {
+    echo "Missing harness command after --" >&2
+    return 1
+  }
+
+  # Keep every unset/assignment in a child subshell and use only zsh builtins
+  # before exec. Passing ANTHROPIC_AUTH_TOKEN=<master-key> (or another provider
+  # secret) as an argument to /usr/bin/env exposes it briefly through process
+  # argv even though the final Claude process receives it only as environment.
+  (
+    local index=1
+    for scrub in "${scrub_names[@]}"; do
+      unset "$scrub"
+    done
+    while (( index <= ${#assignment_names[@]} )); do
+      export "${assignment_names[$index]}=${assignment_values[$index]}"
+      (( index += 1 ))
+    done
+    exec "$@"
+  )
 }
 
 ai_litellm_ensure_claude_settings_file() {
@@ -893,6 +1618,27 @@ ai_litellm_render_settings_defaults() {
   mv "$tmp" "$settings_path"
 }
 
+ai_litellm_write_generated_settings_exact() {
+  local settings_path="$1" payload="$2" settings_dir tmp
+  settings_dir="${settings_path:h}"
+  ai_litellm_assert_rendered_path "$settings_dir" "generated Claude settings dir" || return 1
+  if [[ -e "$settings_path" || -L "$settings_path" ]]; then
+    [[ -f "$settings_path" && ! -L "$settings_path" ]] || {
+      echo "Refusing unsafe generated Claude settings path: $settings_path" >&2
+      return 1
+    }
+  fi
+  mkdir -p "$settings_dir" || return 1
+  chmod 700 "$settings_dir" 2>/dev/null || true
+  tmp="$(mktemp "$settings_dir/.${settings_path:t}.XXXXXX")" || return 1
+  print -r -- "$payload" | jq '.' >| "$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  chmod 600 "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$settings_path"
+}
+
 ai_litellm_render_claude_settings() {
   local harness="${1:-claude}"
   local settings_path="${2:-}"
@@ -903,16 +1649,21 @@ ai_litellm_render_claude_settings() {
   [[ -n "$proxy_settings_path" ]] || proxy_settings_path="$(ai_litellm_harness_json "$harness" paths.settingsArgProxy 2>/dev/null || true)"
 
   defaults="$(ai_litellm_harness_json "$harness" adapterConfig.generatedSettings 2>/dev/null || true)"
-  ai_litellm_render_settings_defaults "$settings_path" "$defaults" || return $?
-
-  [[ -n "$proxy_settings_path" ]] || return 0
+  [[ -n "$proxy_settings_path" ]] || proxy_settings_path="$settings_path"
   proxy_extra="$(ai_litellm_harness_json "$harness" adapterConfig.generatedSettingsProxy 2>/dev/null || true)"
   if [[ -n "$defaults" && -n "$proxy_extra" ]]; then
     proxy_defaults="$(jq -cn --argjson base "$defaults" --argjson extra "$proxy_extra" '$base * $extra')" || return 1
   else
     proxy_defaults="${proxy_extra:-$defaults}"
   fi
-  ai_litellm_render_settings_defaults "$proxy_settings_path" "$proxy_defaults"
+  # This is a package-generated --settings overlay, not the user's native
+  # settings file. Rewrite the exact allowlisted payload every time so an old
+  # or edited overlay cannot retain env/model/apiKeyHelper routing overrides.
+  # `${value:-{}}` is not a safe way to express a literal JSON object in zsh:
+  # the first `}` terminates the parameter expansion and the second becomes a
+  # literal suffix, turning every non-empty payload into malformed `...}}`.
+  [[ -n "$proxy_defaults" ]] || proxy_defaults='{}'
+  ai_litellm_write_generated_settings_exact "$proxy_settings_path" "$proxy_defaults"
 }
 
 # Shared-environment layer: link user-scope environment artifacts (settings,
@@ -977,7 +1728,7 @@ ai_litellm_claude_shared_settings_lint() {
       echo "claude-litellm: shared settings file is not valid JSON: $file" >&2
       return 1
     }
-    bad="$(jq -r '(.env // {}) | keys[] | select(test("^(ANTHROPIC_(BASE_URL|BEDROCK_BASE_URL|VERTEX_BASE_URL|AUTH_TOKEN|API_KEY|MODEL|SMALL_FAST_MODEL|CUSTOM_MODEL|CUSTOM_HEADERS|DEFAULT_)|CLAUDE_CODE_(SUBAGENT_MODEL|ENABLE_GATEWAY_MODEL_DISCOVERY|AUTO_COMPACT_WINDOW|MAX_OUTPUT_TOKENS|ATTRIBUTION_HEADER|USE_BEDROCK|USE_VERTEX|SKIP_BEDROCK_AUTH|SKIP_VERTEX_AUTH|API_KEY_HELPER_TTL_MS)|AWS_BEARER_TOKEN_BEDROCK|OPENROUTER_|LITELLM_)"))' "$file" 2>/dev/null || true)"
+    bad="$(jq -r '(.env // {}) | keys[] | select(test("^(ANTHROPIC_(BASE_URL|BEDROCK_BASE_URL|VERTEX_BASE_URL|AUTH_TOKEN|API_KEY|MODEL|SMALL_FAST_MODEL|CUSTOM_MODEL|CUSTOM_HEADERS|DEFAULT_)|CLAUDE_CODE_(SUBAGENT_MODEL|ENABLE_GATEWAY_MODEL_DISCOVERY|AUTO_COMPACT_WINDOW|MAX_OUTPUT_TOKENS|ATTRIBUTION_HEADER|USE_BEDROCK|USE_VERTEX|SKIP_BEDROCK_AUTH|SKIP_VERTEX_AUTH|API_KEY_HELPER_TTL_MS)|AWS_BEARER_TOKEN_BEDROCK|OPENROUTER_|LITELLM_|HTTP_PROXY$|HTTPS_PROXY$|ALL_PROXY$|NO_PROXY$|http_proxy$|https_proxy$|all_proxy$|no_proxy$)"))' "$file" 2>/dev/null || true)"
     if [[ -n "$bad" ]]; then
       echo "claude-litellm: refusing to launch — shared $file env block carries backend routing keys that would override per-invocation routing for every variant:" >&2
       print -r -- "$bad" | sed 's/^/  - /' >&2
@@ -1520,7 +2271,7 @@ ai_litellm_model_runtime_ready() {
 
 ai_litellm_pid_from_file() {
   local pid_file="$1"
-  [[ -f "$pid_file" ]] || return 1
+  [[ -f "$pid_file" && ! -L "$pid_file" ]] || return 1
   local pid
   pid="$(<"$pid_file")"
   ai_litellm_pid_is_litellm "$pid" || return 1
@@ -1547,6 +2298,8 @@ ai_litellm_pid_is_litellm() {
        "$command_line" == "$process_executable $venv/bin/litellm-proxy "* || \
        ( -f "$bootstrap" && ! -L "$bootstrap" && "$command_line" == "$process_executable $bootstrap --config $config"* ) || \
        ( -f "$bootstrap" && ! -L "$bootstrap" && "$command_line" == "$venv/bin/python $bootstrap --config $config"* ) || \
+       ( -f "$bootstrap" && ! -L "$bootstrap" && "$command_line" == "$process_executable -sP -B $bootstrap --config $config"* ) || \
+       ( -f "$bootstrap" && ! -L "$bootstrap" && "$command_line" == "$venv/bin/python -sP -B $bootstrap --config $config"* ) || \
        "$command_line" == "$process_executable $venv/"*"/litellm/proxy/"* ]] && return 0
   elif [[ "$process_executable" == "$venv/bin/litellm" || \
           "$process_executable" == "$venv/bin/litellm-proxy" ]]; then
@@ -1570,6 +2323,19 @@ ai_litellm_pid_is_litellm() {
   esac
 }
 
+ai_litellm_owned_proxy_pids() {
+  local line pid command_line
+  while IFS= read -r line; do
+    [[ "$line" =~ '^[[:space:]]*([0-9]+)[[:space:]]+(.*)$' ]] || continue
+    pid="${match[1]}"
+    command_line="${match[2]}"
+    [[ "$pid" != "$$" ]] || continue
+    [[ "$command_line" == *"--config $AI_LITELLM_CONFIG"* || \
+       "$command_line" == *"--config=$AI_LITELLM_CONFIG"* ]] || continue
+    ai_litellm_pid_is_litellm "$pid" && printf '%s\n' "$pid"
+  done < <(ps -axo pid=,command= 2>/dev/null)
+}
+
 ai_litellm_active_pid_file() {
   local pid_file
   for pid_file in "$AI_LITELLM_PID_FILE" "$AI_LITELLM_LEGACY_PID_FILE" "$AI_LITELLM_LEGACY_CLAUDE_PID_FILE"; do
@@ -1582,12 +2348,15 @@ ai_litellm_active_pid_file() {
 
 ai_litellm_active_pid() {
   local pid_file
-  pid_file="$(ai_litellm_active_pid_file)" || return 1
-  ai_litellm_pid_from_file "$pid_file"
+  if pid_file="$(ai_litellm_active_pid_file 2>/dev/null)"; then
+    ai_litellm_pid_from_file "$pid_file"
+    return
+  fi
+  ai_litellm_owned_proxy_pids | head -n 1
 }
 
 ai_litellm_pid_running() {
-  ai_litellm_active_pid >/dev/null 2>&1
+  [[ -n "$(ai_litellm_owned_proxy_pids 2>/dev/null)" ]]
 }
 
 ai_litellm_health() {
@@ -1607,13 +2376,18 @@ ai_litellm_config_hash() {
 }
 
 ai_litellm_record_proxy_config_state() {
-  mkdir -p "$AI_LITELLM_PROXY_HOME"
-  ai_litellm_config_hash > "$AI_LITELLM_CONFIG_HASH_FILE" 2>/dev/null || true
-  date -u '+%Y-%m-%dT%H:%M:%SZ' > "$AI_LITELLM_STARTED_AT_FILE"
+  local config_hash started_at
+  ai_litellm_proxy_state_paths_safe || return 1
+  config_hash="$(ai_litellm_config_hash)" || return 1
+  started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" || return 1
+  printf '%s\n' "$config_hash" | \
+    ai_litellm_atomic_private_write "$AI_LITELLM_CONFIG_HASH_FILE" || return 1
+  printf '%s\n' "$started_at" | \
+    ai_litellm_atomic_private_write "$AI_LITELLM_STARTED_AT_FILE"
 }
 
 ai_litellm_proxy_config_current() {
-  [[ -f "$AI_LITELLM_CONFIG_HASH_FILE" ]] || return 2
+  [[ -f "$AI_LITELLM_CONFIG_HASH_FILE" && ! -L "$AI_LITELLM_CONFIG_HASH_FILE" ]] || return 2
   local current recorded
   current="$(ai_litellm_config_hash 2>/dev/null)" || return 1
   recorded="$(<"$AI_LITELLM_CONFIG_HASH_FILE")"
@@ -1633,7 +2407,7 @@ ai_litellm_proxy_registry_matches_file() {
   oauth_python="$(ai_litellm_litellm_python 2>/dev/null)" || return 1
   oauth_manager="$AI_LITELLM_HOME/config/claude-litellm/oauth.py"
   [[ -f "$oauth_manager" ]] || return 1
-  oauth_status="$("$oauth_python" "$oauth_manager" status all --json 2>/dev/null)" || return 1
+  oauth_status="$(ai_litellm_python_isolated "$oauth_python" "$oauth_manager" status all --json 2>/dev/null)" || return 1
   actual_models="$(ai_litellm_proxy_model_names)" || return 1
 
   # LiteLLM resolves ChatGPT OAuth while constructing its deployment.  Our
@@ -1681,13 +2455,16 @@ ai_litellm_reachable_proxy_current() {
 
 ai_litellm_lock_stale() {
   [[ -d "$AI_LITELLM_LOCK_DIR" ]] || return 1
-  local lock_pid=""
+  local lock_pid="" age=0
   [[ -f "$AI_LITELLM_LOCK_DIR/pid" ]] && lock_pid="$(<"$AI_LITELLM_LOCK_DIR/pid")"
+  age="$(perl -e 'my @s = stat($ARGV[0]); print @s ? int(time - $s[9]) : 0' "$AI_LITELLM_LOCK_DIR" 2>/dev/null || printf '0')"
+  if [[ -z "$lock_pid" ]]; then
+    # mkdir publishes before pid. Give the winner time to publish instead of
+    # deleting a live lock in that tiny window.
+    (( ${age:-0} > 2 ))
+    return
+  fi
   if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
-    local age=0
-    if [[ -f "$AI_LITELLM_LOCK_DIR/started_at" ]]; then
-      age="$(perl -e 'print int(time - (stat($ARGV[0]))[9])' "$AI_LITELLM_LOCK_DIR/started_at" 2>/dev/null || printf '0')"
-    fi
     if (( ${age:-0} > ${AI_LITELLM_LOCK_MAX_AGE_SECONDS:-300} )) && ! ai_litellm_health; then
       return 0
     fi
@@ -1697,28 +2474,47 @@ ai_litellm_lock_stale() {
 }
 
 ai_litellm_clear_lock() {
-  [[ -d "$AI_LITELLM_LOCK_DIR" ]] || return 0
-  rm -f "$AI_LITELLM_LOCK_DIR/pid" "$AI_LITELLM_LOCK_DIR/started_at" 2>/dev/null || true
-  rmdir "$AI_LITELLM_LOCK_DIR" 2>/dev/null || true
+  if [[ -d "$AI_LITELLM_LOCK_DIR" && \
+        "$(<"$AI_LITELLM_LOCK_DIR/pid" 2>/dev/null || true)" == "$$" ]]; then
+    rm -rf "$AI_LITELLM_LOCK_DIR" 2>/dev/null || true
+  fi
+  if [[ "${AI_LITELLM_START_LOCK_FD:-}" == <-> ]]; then
+    zsystem flock -u "$AI_LITELLM_START_LOCK_FD" 2>/dev/null || true
+  fi
+  typeset -g AI_LITELLM_START_LOCK_FD=""
 }
 
 ai_litellm_acquire_lock() {
-  local lock_wait
+  local lock_wait fd owner
+  zmodload zsh/system || return 1
+  typeset -g AI_LITELLM_START_LOCK_FD=""
   mkdir -p "$AI_LITELLM_PROXY_HOME"
+  ai_litellm_lock_file_prepare "${AI_LITELLM_LOCK_DIR}.flock" || return 1
   for lock_wait in {1..50}; do
-    if mkdir "$AI_LITELLM_LOCK_DIR" 2>/dev/null; then
-      printf '%s\n' "$$" > "$AI_LITELLM_LOCK_DIR/pid"
+    if zsystem flock -t 0 -f fd "${AI_LITELLM_LOCK_DIR}.flock"; then
+      chmod 600 "${AI_LITELLM_LOCK_DIR}.flock" 2>/dev/null || true
+      if [[ -d "$AI_LITELLM_LOCK_DIR" ]]; then
+        owner="$(<"$AI_LITELLM_LOCK_DIR/pid" 2>/dev/null || printf '?')"
+        if [[ "$owner" != '?' ]] && kill -0 "$owner" 2>/dev/null; then
+          zsystem flock -u "$fd" 2>/dev/null || true
+          ai_litellm_health && return 2
+          sleep 0.1
+          continue
+        fi
+        rm -rf "$AI_LITELLM_LOCK_DIR"
+      elif [[ -e "$AI_LITELLM_LOCK_DIR" || -L "$AI_LITELLM_LOCK_DIR" ]]; then
+        zsystem flock -u "$fd" 2>/dev/null || true
+        return 1
+      fi
+      mkdir "$AI_LITELLM_LOCK_DIR" || { zsystem flock -u "$fd" 2>/dev/null || true; return 1; }
       date -u '+%Y-%m-%dT%H:%M:%SZ' > "$AI_LITELLM_LOCK_DIR/started_at"
+      printf '%s\n' "$$" > "$AI_LITELLM_LOCK_DIR/pid"
+      AI_LITELLM_START_LOCK_FD="$fd"
       return 0
     fi
 
     if ai_litellm_health; then
       return 2
-    fi
-
-    if ai_litellm_lock_stale; then
-      ai_litellm_clear_lock
-      continue
     fi
 
     sleep 0.1
@@ -1745,19 +2541,65 @@ ai_litellm_cleanup_failed_start() {
     fi
   fi
 
-  if [[ -f "$AI_LITELLM_PID_FILE" && "$(<$AI_LITELLM_PID_FILE)" == "$pid" ]]; then
+  if [[ -f "$AI_LITELLM_PID_FILE" && ! -L "$AI_LITELLM_PID_FILE" && \
+        "$(<$AI_LITELLM_PID_FILE)" == "$pid" ]]; then
     rm -f "$AI_LITELLM_PID_FILE"
   fi
   rm -f "$AI_LITELLM_CONFIG_HASH_FILE" "$AI_LITELLM_STARTED_AT_FILE"
 }
 
-ai_litellm_start() {
+ai_litellm_lifecycle_lock_acquire() {
+  if [[ "${AI_LITELLM_LIFECYCLE_LOCK_FD:-}" == <-> ]]; then
+    typeset -gi AI_LITELLM_LIFECYCLE_LOCK_DEPTH=$(( ${AI_LITELLM_LIFECYCLE_LOCK_DEPTH:-1} + 1 ))
+    return 0
+  fi
+  local fd
+  mkdir -p "${AI_LITELLM_LIFECYCLE_LOCK:h}"
+  ai_litellm_lock_file_prepare "${AI_LITELLM_LIFECYCLE_LOCK}.flock" || return 1
+  zmodload zsh/system || {
+    echo "zsh/system is required for the package lifecycle lock." >&2
+    return 1
+  }
+  if ! zsystem flock -t 0 -f fd "${AI_LITELLM_LIFECYCLE_LOCK}.flock"; then
+    echo "claude-litellm package installation or removal is in progress; retry afterward." >&2
+    return 1
+  fi
+  chmod 600 "${AI_LITELLM_LIFECYCLE_LOCK}.flock" 2>/dev/null || true
+  typeset -g AI_LITELLM_LIFECYCLE_LOCK_FD="$fd"
+  typeset -gi AI_LITELLM_LIFECYCLE_LOCK_DEPTH=1
+}
+
+ai_litellm_lifecycle_lock_release() {
+  [[ "${AI_LITELLM_LIFECYCLE_LOCK_FD:-}" == <-> ]] || return 0
+  if (( ${AI_LITELLM_LIFECYCLE_LOCK_DEPTH:-1} > 1 )); then
+    typeset -gi AI_LITELLM_LIFECYCLE_LOCK_DEPTH=$(( AI_LITELLM_LIFECYCLE_LOCK_DEPTH - 1 ))
+    return 0
+  fi
+  zmodload zsh/system 2>/dev/null || true
+  zsystem flock -u "$AI_LITELLM_LIFECYCLE_LOCK_FD" 2>/dev/null || true
+  typeset -g AI_LITELLM_LIFECYCLE_LOCK_FD=""
+  typeset -gi AI_LITELLM_LIFECYCLE_LOCK_DEPTH=0
+}
+
+_ai_litellm_start_unlocked() {
   local master_key openrouter_key proxy_python
+  if ! ai_litellm_install_integrity_ok; then
+    echo "Installed package/runtime integrity failed; reinstall before starting the proxy." >&2
+    return 1
+  fi
+  if ! ai_litellm_effective_config_current; then
+    echo "Generated LiteLLM/Claude configuration is stale or modified; run 'claude-litellm sync' before starting the proxy." >&2
+    return 1
+  fi
   proxy_python="$(ai_litellm_litellm_python 2>/dev/null)" || {
     echo "LiteLLM Python runtime is unavailable; reinstall the pinned runtime." >&2
     return 1
   }
-  if ! PYTHONPATH="$AI_LITELLM_CONFIG_HOME${PYTHONPATH:+:$PYTHONPATH}" "$proxy_python" -c '
+  if ! ai_litellm_proxy_state_paths_safe; then
+    echo "Proxy state paths are unsafe; repair or remove the reported leaf before starting." >&2
+    return 1
+  fi
+  if ! ai_litellm_python_configured "$proxy_python" -c '
 from ai_litellm_callbacks.oauth_guard import PATCH_ACTIVE
 assert PATCH_ACTIVE is True
 ' >/dev/null 2>&1; then
@@ -1774,10 +2616,6 @@ assert PATCH_ACTIVE is True
   if grep -q 'os\.environ/OPENROUTER_API_KEY' "$AI_LITELLM_CONFIG" && [[ -z "$openrouter_key" ]]; then
     echo "warn: OpenRouter routes are configured without an OpenRouter API key; those routes will fail, while OAuth and local routes remain available." >&2
   fi
-
-  mkdir -p "$AI_LITELLM_PROXY_HOME"
-  chmod 700 "$AI_LITELLM_PROXY_HOME" 2>/dev/null || true
-  [[ -f "$AI_LITELLM_LOG_FILE" ]] && chmod 600 "$AI_LITELLM_LOG_FILE" 2>/dev/null || true
 
   if ai_litellm_health; then
     if ! ai_litellm_reachable_proxy_current; then
@@ -1825,42 +2663,55 @@ assert PATCH_ACTIVE is True
   fi
 
   rm -f "$AI_LITELLM_PID_FILE" "$AI_LITELLM_LEGACY_PID_FILE" "$AI_LITELLM_LEGACY_CLAUDE_PID_FILE"
-  : > "$AI_LITELLM_LOG_FILE"
-  chmod 600 "$AI_LITELLM_LOG_FILE" 2>/dev/null || true
-
   # Resolve every other os.environ/<VAR> the registry references (OpenAI, Anthropic,
   # Gemini, ... beyond OpenRouter) from Keychain/env-file and inject them into the
   # proxy subprocess only. Never exported to the interactive shell.
-  local -a extra_env
+  local -a extra_env_names extra_env_values
   local _ref _val
   for _ref in ${(f)"$(ai_litellm_config_env_refs 2>/dev/null)"}; do
     case "$_ref" in
       OPENROUTER_API_KEY|LITELLM_MASTER_KEY) continue ;;
     esac
+    [[ "$_ref" =~ '^[A-Za-z_][A-Za-z0-9_]*$' ]] || {
+      echo "Refusing invalid provider credential environment name in the model registry: $_ref" >&2
+      return 1
+    }
     _val="$(ai_litellm_resolve_secret_var "$_ref" 2>/dev/null || true)"
     if [[ -n "$_val" ]]; then
-      extra_env+=("$_ref=$_val")
+      extra_env_names+=("$_ref")
+      extra_env_values+=("$_val")
     else
       echo "warn: registry references os.environ/$_ref but it is not in Keychain/env-file; routes needing it will fail until you store it." >&2
     fi
   done
 
-  local pid
+  local pid _extra_index
   pid="$(
-    OPENROUTER_API_KEY="$openrouter_key" \
-    LITELLM_MASTER_KEY="$master_key" \
-    AI_LITELLM_HOST="$(ai_litellm_host)" \
-    AI_LITELLM_PORT="$(ai_litellm_port)" \
-    AI_LITELLM_PYTHON="$proxy_python" \
-    NUM_WORKERS=1 \
-    PYTHONPATH="$AI_LITELLM_CONFIG_HOME${PYTHONPATH:+:$PYTHONPATH}" \
-    env -u OPENAI_API_KEY -u XAI_API_KEY "${extra_env[@]}" python3 - <<'PY'
+    # This command substitution is a subshell. Dynamic exports therefore reach
+    # only the launcher/proxy descendants and never the interactive shell. Do
+    # not pass NAME=secret pairs through /usr/bin/env: they are process argv and
+    # can be sampled by other same-user tools while the launcher is starting.
+    unset OPENAI_API_KEY XAI_API_KEY
+    export OPENROUTER_API_KEY="$openrouter_key"
+    export LITELLM_MASTER_KEY="$master_key"
+    export AI_LITELLM_HOST="$(ai_litellm_host)"
+    export AI_LITELLM_PORT="$(ai_litellm_port)"
+    export AI_LITELLM_PYTHON="$proxy_python"
+    export NUM_WORKERS=1
+    _extra_index=1
+    while (( _extra_index <= ${#extra_env_names[@]} )); do
+      export "${extra_env_names[$_extra_index]}=${extra_env_values[$_extra_index]}"
+      (( _extra_index += 1 ))
+    done
+    ai_litellm_python_isolated "$proxy_python" - <<'PY'
 import os
 import subprocess
 import sys
 
 cmd = [
     os.environ["AI_LITELLM_PYTHON"],
+    "-sP",
+    "-B",
     os.path.join(
         os.environ["AI_LITELLM_CONFIG_HOME"],
         "ai_litellm_callbacks",
@@ -1874,8 +2725,26 @@ cmd = [
     os.environ["AI_LITELLM_PORT"],
 ]
 
+child_env = os.environ.copy()
+for name in (
+    "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT", "PYTHONBREAKPOINT",
+    "PYTHONUSERBASE", "PYTHONEXECUTABLE", "PYTHONWARNINGS",
+    "PYTHONPLATLIBDIR", "PYTHONPYCACHEPREFIX",
+):
+    child_env.pop(name, None)
+child_env["PYTHONPATH"] = os.environ["AI_LITELLM_CONFIG_HOME"]
+child_env["PYTHONNOUSERSITE"] = "1"
+
 try:
-    log = open(os.environ["AI_LITELLM_LOG_FILE"], "ab", buffering=0)
+    log_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        log_flags |= os.O_NOFOLLOW
+    log_fd = os.open(os.environ["AI_LITELLM_LOG_FILE"], log_flags, 0o600)
+    log_info = os.fstat(log_fd)
+    if not __import__("stat").S_ISREG(log_info.st_mode):
+        raise OSError("proxy log is not a regular file")
+    os.fchmod(log_fd, 0o600)
+    log = os.fdopen(log_fd, "ab", buffering=0)
     process = subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -1883,6 +2752,7 @@ try:
         stderr=subprocess.STDOUT,
         start_new_session=True,
         close_fds=True,
+        env=child_env,
     )
 except Exception as exc:
     print(f"Failed to start LiteLLM: {exc}", file=sys.stderr)
@@ -1895,12 +2765,21 @@ PY
     ai_litellm_clear_lock
     return 1
   }
-  printf '%s\n' "$pid" > "$AI_LITELLM_PID_FILE"
+  printf '%s\n' "$pid" | ai_litellm_atomic_private_write "$AI_LITELLM_PID_FILE" || {
+    ai_litellm_cleanup_failed_start "$pid"
+    ai_litellm_clear_lock
+    return 1
+  }
 
   local i
   for i in {1..30}; do
     if ai_litellm_health && ai_litellm_proxy_registry_matches_file && ai_litellm_pid_is_litellm "$pid"; then
-      ai_litellm_record_proxy_config_state
+      ai_litellm_record_proxy_config_state || {
+        echo "LiteLLM started but secure state publication failed; stopping it." >&2
+        ai_litellm_cleanup_failed_start "$pid"
+        ai_litellm_clear_lock
+        return 1
+      }
       echo "LiteLLM started at $(ai_litellm_base_url) (pid $pid)"
       ai_litellm_clear_lock
       return 0
@@ -1914,48 +2793,89 @@ PY
   return 1
 }
 
-ai_litellm_stop() {
+ai_litellm_start() {
+  ai_litellm_lifecycle_lock_acquire || return $?
+  local rc=0
+  {
+    _ai_litellm_start_unlocked "$@" || rc=$?
+  } always {
+    ai_litellm_clear_lock
+    ai_litellm_lifecycle_lock_release
+  }
+  return $rc
+}
+
+_ai_litellm_stop_unlocked() {
   echo "Stopping shared LiteLLM proxy; active claude-litellm sessions may fail." >&2
 
-  local pid_file pid
-  pid_file="$(ai_litellm_active_pid_file 2>/dev/null)" || {
+  local pid attempt still_running=0
+  local -a pids
+  pids=("${(@f)$(ai_litellm_owned_proxy_pids 2>/dev/null)}")
+  pids=("${(@)pids:#}")
+  if (( ${#pids[@]} == 0 )); then
     rm -f "$AI_LITELLM_PID_FILE" "$AI_LITELLM_LEGACY_PID_FILE" "$AI_LITELLM_LEGACY_CLAUDE_PID_FILE"
     echo "No claude-litellm managed LiteLLM process is running"
     return 0
-  }
-  pid="$(ai_litellm_pid_from_file "$pid_file")" || {
-    rm -f "$AI_LITELLM_PID_FILE" "$AI_LITELLM_LEGACY_PID_FILE" "$AI_LITELLM_LEGACY_CLAUDE_PID_FILE"
-    echo "No claude-litellm managed LiteLLM process is running"
-    return 0
-  }
+  fi
 
   # Close PID-reuse races: revalidate immediately before every signal.
-  ai_litellm_pid_is_litellm "$pid" || {
-    echo "Refusing to stop pid $pid: LiteLLM ownership changed." >&2
-    return 1
-  }
-  kill -TERM "$pid" 2>/dev/null || true
-  local attempt
+  for pid in "${pids[@]}"; do
+    ai_litellm_pid_is_litellm "$pid" || continue
+    kill -TERM "$pid" 2>/dev/null || true
+  done
   for attempt in {1..20}; do
-    kill -0 "$pid" 2>/dev/null || break
+    still_running=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null && ai_litellm_pid_is_litellm "$pid"; then
+        still_running=1
+        break
+      fi
+    done
+    (( still_running )) || break
     sleep 0.25
   done
-  if kill -0 "$pid" 2>/dev/null && ai_litellm_pid_is_litellm "$pid"; then
-    kill -KILL "$pid" 2>/dev/null || true
-  fi
-  if kill -0 "$pid" 2>/dev/null && ai_litellm_pid_is_litellm "$pid"; then
-    echo "Failed to stop owned LiteLLM pid $pid; state was retained." >&2
-    return 1
-  fi
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null && ai_litellm_pid_is_litellm "$pid"; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null && ai_litellm_pid_is_litellm "$pid"; then
+      echo "Failed to stop owned LiteLLM pid $pid; state was retained." >&2
+      return 1
+    fi
+  done
   rm -f "$AI_LITELLM_PID_FILE" "$AI_LITELLM_LEGACY_PID_FILE" "$AI_LITELLM_LEGACY_CLAUDE_PID_FILE"
   rm -f "$AI_LITELLM_CONFIG_HASH_FILE" "$AI_LITELLM_STARTED_AT_FILE"
   ai_litellm_clear_lock
-  echo "LiteLLM stopped (pid $pid)"
+  echo "LiteLLM stopped (pid(s) ${(j:, :)pids})"
+}
+
+ai_litellm_stop() {
+  ai_litellm_lifecycle_lock_acquire || return $?
+  local rc=0
+  {
+    _ai_litellm_stop_unlocked "$@" || rc=$?
+  } always {
+    ai_litellm_clear_lock
+    ai_litellm_lifecycle_lock_release
+  }
+  return $rc
 }
 
 ai_litellm_restart() {
-  ai_litellm_stop || return $?
-  ai_litellm_start
+  ai_litellm_lifecycle_lock_acquire || return $?
+  local rc=0
+  {
+    _ai_litellm_stop_unlocked || rc=$?
+    if (( rc == 0 )); then
+      _ai_litellm_start_unlocked || rc=$?
+    fi
+  } always {
+    ai_litellm_clear_lock
+    ai_litellm_lifecycle_lock_release
+  }
+  return $rc
 }
 
 ai_litellm_active_log_file() {
@@ -1977,6 +2897,7 @@ ai_litellm_status() {
   echo "Config:   $AI_LITELLM_CONFIG"
   echo "Settings: $AI_LITELLM_SETTINGS"
   echo "Base URL: $(ai_litellm_base_url)"
+  echo "Effort:   OpenRouter xhigh/max normalize to high on LiteLLM 1.92; only effective levels are selectable"
   if ai_litellm_pid_running; then
     echo "PID:      $(ai_litellm_active_pid)"
     echo "PID file: $(ai_litellm_active_pid_file)"
@@ -2039,6 +2960,8 @@ ai_litellm_status_json() {
     pidFile "$pidfile" \
     health "$health" \
     configCurrency "$currency" \
+    reasoningEffortCeiling "high" \
+    reasoningEffortTransport "litellm-1.92-anthropic-adapter-normalizes-xhigh-max-to-high" \
     lock "$lock" \
     log "$log"
 }
@@ -2265,6 +3188,29 @@ litellm-master-key-load() {
 ai_litellm_key_status() {
   ai_litellm_openrouter_key_status
   ai_litellm_master_key_status
+  local env_name source printed=0
+  for env_name in "${(@f)$(ai_litellm_config_env_refs 2>/dev/null)}"; do
+    case "$env_name" in OPENROUTER_API_KEY|LITELLM_MASTER_KEY) continue ;; esac
+    if (( ! printed )); then
+      echo "Provider credentials:"
+      printed=1
+    fi
+    source="$(ai_litellm_key_source_env "$env_name" 2>/dev/null || printf missing)"
+    printf '  %-32s %s\n' "$env_name" "$source"
+  done
+}
+
+ai_litellm_key_source_env() {
+  local env_name="$1" service account
+  [[ "$env_name" =~ '^[A-Za-z_][A-Za-z0-9_]*$' ]] || return 1
+  if [[ -n "${parameters[$env_name]:-}" && -n "${(P)env_name}" ]]; then printf 'environment\n'; return 0; fi
+  if ai_litellm_env_value "$env_name" >/dev/null 2>&1; then printf 'env-file\n'; return 0; fi
+  service="$(ai_litellm_json "secrets.$env_name.keychainService" 2>/dev/null || true)"
+  account="$(ai_litellm_json "secrets.$env_name.keychainAccount" 2>/dev/null || printf '%s' "$USER")"
+  [[ -n "$service" ]] || service="$(printf '%s' "$env_name" | tr 'A-Z_' 'a-z-')"
+  if ai_litellm_keychain_value "$service" "$account" >/dev/null 2>&1; then printf 'keychain\n'; return 0; fi
+  printf 'missing\n'
+  return 1
 }
 
 # Mirror of ai_litellm_openrouter_key_status / ai_litellm_master_key_status detection order — keep in sync.
@@ -2288,10 +3234,19 @@ ai_litellm_key_source() {
 }
 
 ai_litellm_key_status_json() {
-  local or_src ms_src
+  local or_src ms_src providers='[]' env_name source row
   or_src="$(ai_litellm_key_source openrouter 2>/dev/null || printf 'missing')"
   ms_src="$(ai_litellm_key_source master 2>/dev/null || printf 'missing')"
-  node -e "process.stdout.write(JSON.stringify({openrouter:{source:process.argv[1]},master:{source:process.argv[2]}}))" "$or_src" "$ms_src"
+  for env_name in "${(@f)$(ai_litellm_config_env_refs 2>/dev/null)}"; do
+    case "$env_name" in OPENROUTER_API_KEY|LITELLM_MASTER_KEY) continue ;; esac
+    source="$(ai_litellm_key_source_env "$env_name" 2>/dev/null || printf missing)"
+    row="$(jq -cn --arg name "$env_name" --arg source "$source" '{name:$name,source:$source}')" || return 1
+    providers="$(jq -cn --argjson rows "$providers" --argjson row "$row" '$rows + [$row]')" || return 1
+  done
+  node -e '
+const [openrouter, master, providers] = process.argv.slice(1);
+process.stdout.write(JSON.stringify({openrouter:{source:openrouter},master:{source:master},providers:JSON.parse(providers)}));
+' "$or_src" "$ms_src" "$providers"
 }
 
 ai_litellm_key_name_to_env() {
@@ -2317,7 +3272,7 @@ ai_litellm_key_name_to_env() {
   esac
 }
 
-ai_litellm_key_set() {
+_ai_litellm_key_set_unlocked() {
   local storage="env-file"
   while (( $# > 0 )); do
     case "$1" in
@@ -2390,6 +3345,22 @@ ai_litellm_key_set() {
   echo "Run 'claude-litellm sync' if the proxy is already running."
 }
 
+ai_litellm_key_set() {
+  ai_litellm_lifecycle_lock_acquire || return $?
+  local rc=0
+  {
+    if ! ai_litellm_install_integrity_ok; then
+      echo "Installed package/runtime integrity failed; reinstall before changing provider credentials." >&2
+      rc=1
+    else
+      _ai_litellm_key_set_unlocked "$@" || rc=$?
+    fi
+  } always {
+    ai_litellm_lifecycle_lock_release
+  }
+  return $rc
+}
+
 ai_litellm_logs() {
   local lines="${1:-$(ai_litellm_json logs.tail 2>/dev/null || printf '120')}"
   local log_file
@@ -2440,7 +3411,7 @@ ai_litellm_doctor_reasoning_capability_truth() {
     return 0
   }
 
-  "$litellm_python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_REASONING_OBS_FILE" <<'PY'
+  ai_litellm_python_isolated "$litellm_python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_REASONING_OBS_FILE" <<'PY'
 import json
 import sys
 
@@ -2461,11 +3432,6 @@ except Exception:
     observations = {}
 
 drop_params = bool((config.get("litellm_settings") or {}).get("drop_params"))
-observed_backends = {
-    obs.get("provider_model")
-    for obs in (observations.get("models") or {}).values()
-    if obs.get("status") == "observed" and obs.get("provider_model")
-}
 seen = set()
 for entry in config.get("model_list") or []:
     name = entry.get("model_name")
@@ -2483,8 +3449,9 @@ for entry in config.get("model_list") or []:
     if key in seen:
         continue
     seen.add(key)
-    if backend in observed_backends:
-        continue
+    # A 2xx probe response—even one containing reasoning—cannot prove that a
+    # requested effort level was forwarded, honored, or changed behavior. Do
+    # not let historical probe observations suppress this static drop check.
     try:
         params = litellm.get_supported_openai_params(model=backend) or []
         supported = bool(litellm.supports_reasoning(model=backend)) or any(
@@ -2651,6 +3618,7 @@ unless routes.empty?
     # numbers are runtime POLICY (defaults/overrides), not provider capability
     # (see the ai_litellm_model_info_anchor_refs_ok exemption).
     block << "    model_info:\n"
+    block << "      x_registry_source: runtime-discovery\n"
     info_for.call(model_id, route).each do |key, value|
       block << "      #{key}: #{scalar.call(value)}\n"
     end
@@ -2675,6 +3643,7 @@ File.rename(tmp, config_path)
 ai_litellm_runtime_routes_refresh() {
   local dry_run="${1:-0}"
   local failed=0 runtime
+  ai_litellm_runtime_discovery_layout_ok || return 1
   for runtime in "${(@f)$(ai_litellm_runtime_names 2>/dev/null)}"; do
     [[ -n "$runtime" ]] || continue
     ai_litellm_runtime_discovery_enabled "$runtime" || continue
@@ -2704,10 +3673,27 @@ ai_litellm_runtime_routes_refresh() {
   return $failed
 }
 
+ai_litellm_runtime_discovery_layout_ok() {
+  local count=0 runtime
+  local -a enabled
+  for runtime in "${(@f)$(ai_litellm_runtime_names 2>/dev/null)}"; do
+    [[ -n "$runtime" ]] || continue
+    if ai_litellm_runtime_discovery_enabled "$runtime"; then
+      enabled+=("$runtime")
+      (( count += 1 ))
+    fi
+  done
+  if (( count > 1 )); then
+    echo "Only one discoverModels runtime is currently supported by the generated route block (enabled: ${(j:, :)enabled})." >&2
+    return 1
+  fi
+  return 0
+}
+
 # Regenerate every derived artifact from the single source and reload the proxy.
 # After editing a token limit in litellm_config.yaml, this is the one command to run.
-ai_litellm_sync() {
-  local failed=0 dry_run=0 restart=1 arg
+_ai_litellm_sync_unlocked() {
+  local failed=0 dry_run=0 restart=1 arg mutation_lock_held=0 mutation_lock_preowned=0
   for arg in "$@"; do
     case "$arg" in
       --dry-run)
@@ -2737,48 +3723,79 @@ ai_litellm_sync() {
   # (not the proxy-start lock) so the restart step's own ai_litellm_start can still
   # acquire AI_LITELLM_LOCK_DIR without deadlocking. Non-blocking: a second sync
   # fails loud rather than interleaving cross-file writes. dry-run writes nothing,
-  # so it needs no lock. A dead holder (crashed sync) is reclaimed.
-  local sync_lock="$AI_LITELLM_PROXY_HOME/litellm.sync.lock" sync_lock_held=0
+  # so it needs no lock. Kernel flock ownership auto-releases on death; the
+  # directory remains only as human-readable/legacy compatibility metadata.
+  local sync_lock="$AI_LITELLM_PROXY_HOME/litellm.sync.lock" sync_lock_held=0 sync_fd="" other_pid=""
+  {
   if (( ! dry_run )); then
     mkdir -p "$AI_LITELLM_PROXY_HOME"
-    if mkdir "$sync_lock" 2>/dev/null; then
-      printf '%s\n' "$$" > "$sync_lock/pid"
-      date -u '+%Y-%m-%dT%H:%M:%SZ' > "$sync_lock/started_at"
-      sync_lock_held=1
-    else
-      # Reclaim a stale lock from a crashed/killed sync. kill -0 alone is unsafe
-      # (the holder pid can be recycled to an unrelated live process — same trap
-      # the proxy lock solves), so also reclaim on age: a sync never legitimately
-      # runs longer than AI_LITELLM_LOCK_MAX_AGE_SECONDS.
-      local other_pid age
+    zmodload zsh/system || return 1
+    ai_litellm_lock_file_prepare "${sync_lock}.flock" || return 1
+    if ! zsystem flock -t 0 -f sync_fd "${sync_lock}.flock"; then
+      echo "claude-litellm sync: another sync is in progress; refusing to run concurrently." >&2
+      return 1
+    fi
+    chmod 600 "${sync_lock}.flock" 2>/dev/null || true
+    if [[ -d "$sync_lock" ]]; then
       other_pid="$(<"$sync_lock/pid" 2>/dev/null || printf '?')"
-      # stat() on a missing/torn started_at returns an empty list, so guard it:
-      # an unknown age must read as 0 (let the kill -0 liveness check decide),
-      # NOT as `time - undef` == the full epoch, which would always exceed the
-      # max-age and wrongly reclaim a live holder mid-acquire.
-      age="$(perl -e 'my @s = stat($ARGV[0]); print @s ? int(time - $s[9]) : 0' "$sync_lock/started_at" 2>/dev/null || printf '0')"
-      if [[ "$other_pid" == '?' ]] || ! kill -0 "$other_pid" 2>/dev/null \
-         || (( ${age:-0} > ${AI_LITELLM_LOCK_MAX_AGE_SECONDS:-300} )); then
-        rm -rf "$sync_lock" 2>/dev/null
-        if mkdir "$sync_lock" 2>/dev/null; then
-          printf '%s\n' "$$" > "$sync_lock/pid"
-          date -u '+%Y-%m-%dT%H:%M:%SZ' > "$sync_lock/started_at"
-          sync_lock_held=1
-        fi
-      fi
-      if (( ! sync_lock_held )); then
-        echo "claude-litellm sync: another sync is in progress (pid $other_pid); refusing to run concurrently." >&2
-        echo "  if no sync is actually running, clear it: rm -rf '$sync_lock'" >&2
+      if [[ "$other_pid" != '?' ]] && kill -0 "$other_pid" 2>/dev/null; then
+        zsystem flock -u "$sync_fd" 2>/dev/null || true
+        echo "claude-litellm sync: another sync is in progress (legacy lock pid $other_pid)." >&2
         return 1
       fi
+      rm -rf "$sync_lock"
+    elif [[ -e "$sync_lock" || -L "$sync_lock" ]]; then
+      zsystem flock -u "$sync_fd" 2>/dev/null || true
+      echo "claude-litellm sync: unsafe non-directory lock path: $sync_lock" >&2
+      return 1
     fi
+    mkdir "$sync_lock" || { zsystem flock -u "$sync_fd" 2>/dev/null || true; return 1; }
+    date -u '+%Y-%m-%dT%H:%M:%SZ' > "$sync_lock/started_at"
+    printf '%s\n' "$$" > "$sync_lock/pid"
+    sync_lock_held=1
     # Sweep orphaned tmp files from a sync that was killed between write and rename.
     # (N) = zsh nullglob qualifier: no error when nothing matches.
     rm -f -- "${AI_LITELLM_CONFIG}".tmp.*(N) 2>/dev/null || true
+    [[ "${AI_LITELLM_USER_MUTATION_FD:-}" == <-> ]] && mutation_lock_preowned=1
+    if ! ai_litellm_user_mutation_lock_acquire; then
+      rm -rf "$sync_lock" 2>/dev/null
+      zsystem flock -u "$sync_fd" 2>/dev/null || true
+      echo "claude-litellm sync: a model/alias mutation is in progress; refusing to interleave configuration writes." >&2
+      return 1
+    fi
+    mutation_lock_held=1
   fi
 
-  # Discover local routes before rendering the Claude adapter.
+  # Rebuild the effective registry/settings from immutable package defaults and
+  # durable user overlays before runtime discovery adds its generated block.
+  echo "- user model/Claude settings overlays"
+  if (( dry_run )); then
+    if ! ai_litellm_render_user_config --validate-only; then
+      echo "claude-litellm sync: overlay validation failed; no derived artifact was changed." >&2
+      return 1
+    fi
+  else
+    if ! ai_litellm_render_user_config; then
+      echo "claude-litellm sync: overlay rendering failed; runtime discovery and proxy restart were skipped." >&2
+      (( mutation_lock_held && ! mutation_lock_preowned )) && ai_litellm_user_mutation_lock_release
+      (( sync_lock_held )) && rm -rf "$sync_lock" 2>/dev/null
+      [[ "$sync_fd" == <-> ]] && zsystem flock -u "$sync_fd" 2>/dev/null || true
+      return 1
+    fi
+  fi
+
+  # Discover local routes after the effective base has been rebuilt.
   ai_litellm_runtime_routes_refresh "$dry_run" || failed=1
+
+  # The runtime writer owns only the validated discovered-route block and uses
+  # a compact line-oriented replacement. Normalize the complete effective
+  # files once more so whitespace around that block, user-model insertion, and
+  # the Claude settings bytes remain exactly what --check will reconstruct at
+  # proxy startup. The renderer carries forward and validates the block that
+  # discovery just wrote; it does not query the runtime again.
+  if (( ! dry_run )); then
+    ai_litellm_render_user_config >/dev/null || failed=1
+  fi
 
   if ai_litellm_harness_descriptor claude >/dev/null 2>&1; then
     echo "- claude settings"
@@ -2799,8 +3816,26 @@ ai_litellm_sync() {
   fi
 
   echo "- claude output limits derive at next launch"
+  (( mutation_lock_held && ! mutation_lock_preowned )) && ai_litellm_user_mutation_lock_release
   (( sync_lock_held )) && rm -rf "$sync_lock" 2>/dev/null
+  [[ "$sync_fd" == <-> ]] && zsystem flock -u "$sync_fd" 2>/dev/null || true
   return $failed
+  } always {
+    (( mutation_lock_held && ! mutation_lock_preowned )) && ai_litellm_user_mutation_lock_release
+    (( sync_lock_held )) && rm -rf "$sync_lock" 2>/dev/null || true
+    [[ "$sync_fd" == <-> ]] && zsystem flock -u "$sync_fd" 2>/dev/null || true
+  }
+}
+
+ai_litellm_sync() {
+  ai_litellm_lifecycle_lock_acquire || return $?
+  local rc=0
+  {
+    _ai_litellm_sync_unlocked "$@" || rc=$?
+  } always {
+    ai_litellm_lifecycle_lock_release
+  }
+  return $rc
 }
 
 ai_litellm_doctor_local_route_uniqueness() {
@@ -2830,6 +3865,47 @@ ai_litellm_doctor_runtimes() {
     ai_litellm_doctor_check "runtime block valid: $rt" ai_litellm_runtime_validate "$rt" || failed=1
   done
   return $failed
+}
+
+ai_litellm_install_integrity_ok() {
+  local manifest="$AI_LITELLM_HOME/install-manifest.json"
+  local python="$AI_LITELLM_HOME/runtime/venv/bin/python"
+  local verifier="$AI_LITELLM_HOME/scripts/verify-install.py"
+  local external_python
+  [[ -f "$manifest" && ! -L "$manifest" && "$(stat -f %Lp "$manifest" 2>/dev/null)" == "600" ]] || return 1
+  [[ -x "$python" && -f "$verifier" && ! -L "$verifier" ]] || return 1
+  external_python="$(ai_litellm_external_python)" || return 1
+
+  # The external interpreter measures every package/runtime byte first. Only
+  # after that succeeds is the managed interpreter allowed to initialize its
+  # site-packages and prove the live import/dependency contract.
+  ai_litellm_python_isolated "$external_python" -S "$verifier"     --prefix "$AI_LITELLM_HOME" >/dev/null || return 1
+  ai_litellm_python_isolated "$python" - "$manifest" <<'PY'
+import hashlib
+import importlib.metadata as metadata
+import json
+import platform
+
+try:
+    runtime = json.load(open(__import__("sys").argv[1], encoding="utf-8"))["runtime"]
+except (OSError, ValueError, KeyError, TypeError):
+    raise SystemExit(1)
+packages = sorted(
+    f"{dist.metadata['Name'].lower().replace('_', '-')}=={dist.version}"
+    for dist in metadata.distributions()
+    if dist.metadata.get("Name")
+)
+if not (
+    platform.python_version() == runtime.get("python")
+    and metadata.version("litellm") == "1.92.0"
+    and metadata.version("prisma") == "0.15.0"
+    and hashlib.sha256("\n".join(packages).encode()).hexdigest()
+        == runtime.get("dependencyFingerprint")
+):
+    raise SystemExit(1)
+import fastapi, litellm, prisma, uvicorn  # noqa: F401,E402
+import litellm.proxy.proxy_cli  # noqa: F401,E402
+PY
 }
 
 ai_litellm_doctor_runtime() {
@@ -2943,10 +4019,12 @@ ai_litellm_doctor() {
   ai_litellm_doctor_warn_env
   ai_litellm_doctor_check "config exists" test -f "$AI_LITELLM_CONFIG" || failed=1
   ai_litellm_doctor_check "settings exists" test -f "$AI_LITELLM_SETTINGS" || failed=1
+  ai_litellm_doctor_check "installed package/runtime provenance intact" ai_litellm_quiet ai_litellm_install_integrity_ok || failed=1
+  ai_litellm_doctor_check "user overlays valid and private" ai_litellm_quiet ai_litellm_render_user_config --check || failed=1
   ai_litellm_doctor_check "lib syntax" zsh -n "$AI_LITELLM_CONFIG_HOME/ai-litellm/lib.zsh" || failed=1
   ai_litellm_doctor_check "claude helper syntax" zsh -n "$AI_LITELLM_CONFIG_HOME/claude-litellm/shell.zsh" || failed=1
   ai_litellm_doctor_check "claude-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/claude-litellm" || failed=1
-  ai_litellm_doctor_check "litellm command available" ai_litellm_quiet command -v litellm || failed=1
+  ai_litellm_doctor_check "managed litellm command available" test -x "$AI_LITELLM_HOME/runtime/venv/bin/litellm" || failed=1
   ai_litellm_doctor_check "node command available" ai_litellm_quiet command -v node || failed=1
   ai_litellm_doctor_check "curl command available" ai_litellm_quiet command -v curl || failed=1
   ai_litellm_doctor_check "jq command available" ai_litellm_quiet command -v jq || failed=1
@@ -2979,6 +4057,7 @@ ai_litellm_doctor() {
   ai_litellm_doctor_check "harness output reservations leave input budget" ai_litellm_context_harness_reservations_ok || failed=1
   ai_litellm_doctor_reasoning_capability_truth
   ai_litellm_doctor_runtimes || failed=1
+  ai_litellm_doctor_check "runtime discovery layout supported" ai_litellm_runtime_discovery_layout_ok || failed=1
   ai_litellm_doctor_check "runtime/registry consistency" ai_litellm_runtime_consistency || failed=1
   ai_litellm_doctor_check "runtime endpoints do not collide" ai_litellm_runtime_ports_ok || failed=1
   if ai_litellm_health; then
@@ -3002,30 +4081,28 @@ ai_litellm_doctor() {
 
 # Token-limit table from the single source. Powers `claude-litellm model limits`.
 ai_litellm_limits_table() {
-  local filter="$1"
-  [[ -z "$filter" ]] || filter="$(ai_litellm_model_resolve "$filter" 2>/dev/null || printf '%s\n' "$filter")"
-  ai_litellm_ruby -ryaml -e '
-config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
-filter = ARGV[1] || ""
-printf("%-22s %-12s %-12s %-14s %-14s\n", "model_name", "context", "output", "input_source", "output_source")
-Array(config["model_list"]).each do |e|
-  name = e["model_name"]
-  next if !filter.empty? && name != filter
-  mi = e["model_info"] || {}
-  printf("%-22s %-12s %-12s %-14s %-14s\n",
-    name,
-    (mi["max_input_tokens"] || "-").to_s,
-    (mi["max_output_tokens"] || "-").to_s,
-    (mi["x_input_confidence"] || "local-config").to_s,
-    (mi["x_output_confidence"] || "local-config").to_s)
-end
-' "$AI_LITELLM_CONFIG" "$filter"
+  local filter="${1:-}" rows
+  rows="$(ai_litellm_model_limits_json "$filter")" || return $?
+  printf "%-30s %-11s %-11s %-11s %-14s %-14s\n" \
+    "model_name" "context" "output_cap" "reserved" "effective_input" "sources"
+  print -r -- "$rows" | jq -r '.[] | [
+    .model,
+    (.context // "-" | tostring),
+    (.output // "-" | tostring),
+    (.outputReservation // "-" | tostring),
+    (.effectiveInput // "-" | tostring),
+    ((.sources.context // "-") + "/" + (.sources.output // "-"))
+  ] | @tsv' | while IFS=$'\t' read -r name context output reservation effective sources; do
+    printf "%-30s %-11s %-11s %-11s %-14s %-14s\n" \
+      "$name" "$context" "$output" "$reservation" "$effective" "$sources"
+  done
 }
 
 ai_litellm_model_limits_json() {
   local filter="${1:-}"
   [[ -z "$filter" ]] || filter="$(ai_litellm_model_resolve "$filter" 2>/dev/null || printf '%s\n' "$filter")"
-  ai_litellm_ruby -ryaml -rjson -e '
+  local rows
+  rows="$(ai_litellm_ruby -ryaml -rjson -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue (YAML.load_file(ARGV[0]) rescue nil))
 filter = ARGV[1]
 rows = []
@@ -3036,17 +4113,34 @@ Array(config && config["model_list"]).each do |entry|
   mi = entry["model_info"] || {}
   ctx = mi["max_input_tokens"]
   out = mi["max_output_tokens"]
-  eff = (ctx && out) ? (ctx - out) : ctx
   rows << {
     "model" => name,
     "context" => ctx,
     "output" => out,
-    "effectiveInput" => eff,
     "sources" => {"context" => (mi["x_input_confidence"] || "local-config"), "output" => (mi["x_output_confidence"] || "local-config")}
   }
 end
 print JSON.generate(rows)
-' "$AI_LITELLM_CONFIG" "$filter" 2>/dev/null || printf "[]"
+' "$AI_LITELLM_CONFIG" "$filter" 2>/dev/null)" || { printf "[]"; return 0; }
+
+  # max_output_tokens is a capability ceiling, not what Claude reserves on
+  # every request. Report the same descriptor policy used at launch so large
+  # context models do not misleadingly show zero effective input.
+  local -a enriched
+  local row name budget merged
+  for row in "${(@f)$(print -r -- "$rows" | jq -c '.[]')}"; do
+    name="$(print -r -- "$row" | jq -r '.model')"
+    budget="$(ai_litellm_harness_output_budget claude "$name" "$name" 2>/dev/null || printf '{}')"
+    merged="$(jq -cn --argjson row "$row" --argjson budget "$budget" '
+      $row + {
+        outputReservation: ($budget.reservation // null),
+        tokenizerHeadroom: ($budget.tokenizerHeadroom // null),
+        effectiveInput: ($budget.effectiveInput // null),
+        reservationSource: ($budget.source // null)
+      }')" || return 1
+    enriched+=("$merged")
+  done
+  printf '%s\n' "${enriched[@]}" | jq -sc '.'
 }
 
 ai_litellm_model_refresh_capabilities() {
@@ -3057,13 +4151,23 @@ ai_litellm_model_refresh_capabilities() {
       --json) as_json=1 ;;
       --check) check=1 ;;
       -h|--help)
-        cat <<'EOF'
+        if [[ "$AI_LITELLM_BASE_CONFIG" != "$AI_LITELLM_CONFIG" ]]; then
+          cat <<'EOF'
+Usage: claude-litellm model refresh-capabilities [--json] [--check]
+
+Audit installed OpenRouter-backed limits against OpenRouter /api/v1/models.
+Installed package defaults are immutable; refresh a user route with remove/add,
+qualification, and reactivation. --apply is source-maintainer-only.
+EOF
+        else
+          cat <<'EOF'
 Usage: claude-litellm model refresh-capabilities [--apply] [--json] [--check]
 
 Reconcile OpenRouter-backed x-limits anchors with OpenRouter /api/v1/models.
 Default mode is read-only. --apply updates provider-published fields only.
 Set AI_LITELLM_OPENROUTER_MODELS_JSON to a local fixture path for offline tests.
 EOF
+        fi
         return 0
         ;;
       *) echo "Usage: claude-litellm model refresh-capabilities [--apply] [--json] [--check]" >&2; return 1 ;;
@@ -3071,14 +4175,20 @@ EOF
     shift
   done
 
+  if (( apply )) && [[ "$AI_LITELLM_BASE_CONFIG" != "$AI_LITELLM_CONFIG" ]]; then
+    echo "Installed package defaults are immutable; refresh-capabilities --apply is source-maintainer-only." >&2
+    echo "Use --check to audit installed routes, or add a freshly cataloged user route with model add." >&2
+    return 1
+  fi
+
   local payload_file cleanup=0
   if [[ -n "${AI_LITELLM_OPENROUTER_MODELS_JSON:-}" ]]; then
     payload_file="$AI_LITELLM_OPENROUTER_MODELS_JSON"
     [[ -f "$payload_file" ]] || { echo "Missing AI_LITELLM_OPENROUTER_MODELS_JSON file: $payload_file" >&2; return 1; }
   else
-    payload_file="$(mktemp "${TMPDIR:-/tmp}/openrouter-models.XXXXXX.json")" || return 1
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/openrouter-models.json.XXXXXX")" || return 1
     cleanup=1
-    curl -fsSL https://openrouter.ai/api/v1/models > "$payload_file" || {
+    curl --connect-timeout 10 --max-time 60 -fsSL https://openrouter.ai/api/v1/models > "$payload_file" || {
       (( cleanup )) && rm -f "$payload_file"
       return 1
     }
@@ -3185,17 +4295,44 @@ raw_config.split(/\n(?=  - model_name:\s*)/).each do |entry|
   alias_routes[anchor]["routes"] << route unless alias_routes[anchor]["routes"].include?(route)
 end
 
-rows = []
+capability_targets = []
 (config["x-limits"] || {}).each do |alias_name, info|
-  info ||= {}
-  route = alias_routes.dig(alias_name, "routes", 0)
-  surfaces = alias_routes.dig(alias_name, "surfaces") || []
+  capability_targets << {
+    "name" => alias_name,
+    "scope" => "package-anchor",
+    "info" => info || {},
+    "route" => alias_routes.dig(alias_name, "routes", 0),
+    "surfaces" => alias_routes.dig(alias_name, "surfaces") || []
+  }
+end
+Array(config["model_list"]).each do |entry|
+  info = entry["model_info"] || {}
+  route = entry.dig("litellm_params", "model").to_s
+  surface = entry["model_name"].to_s
+  next unless info["x_registry_source"] == "user-overlay"
+  next unless route.start_with?("openrouter/") && !surface.empty?
+  capability_targets << {
+    "name" => surface,
+    "scope" => "user-overlay",
+    "info" => info,
+    "route" => route,
+    "surfaces" => [surface]
+  }
+end
+
+rows = []
+capability_targets.each do |target|
+  alias_name = target["name"]
+  info = target["info"]
+  route = target["route"]
+  surfaces = target["surfaces"]
   openrouter = route.to_s.start_with?("openrouter/")
   provider_id = openrouter ? route.sub(/\Aopenrouter\//, "") : nil
   provider = provider_id && provider_index[provider_id]
 
   row = {
     "alias" => alias_name,
+    "scope" => target["scope"],
     "provider_model" => route || "-",
     "surfaces" => surfaces,
     "openrouter" => openrouter,
@@ -3212,8 +4349,12 @@ rows = []
       ["openrouter.max_completion_tokens", provider["max_completion_tokens"]]
     )
     params = Array(provider["supported_parameters"])
-    provider_reasoning = params.any? { |param| %w[reasoning reasoning_effort include_reasoning].include?(param.to_s) }
     provider_efforts = Array(provider.dig("reasoning", "supported_efforts")).map(&:to_s)
+    # LiteLLM 1.92's Anthropic→OpenAI adapter normalizes xhigh/max before an
+    # OpenRouter request is constructed. Preserve those raw provider claims in
+    # the audit row, but compare/apply only the effective selectable contract.
+    effective_provider_efforts = provider_efforts.reject { |effort| %w[xhigh max].include?(effort) }
+    provider_reasoning = !provider_efforts.empty? || params.any? { |param| %w[reasoning reasoning_effort include_reasoning].include?(param.to_s) }
 
     input_conf = source_conf(info, "input")
     output_conf = source_conf(info, "output")
@@ -3243,11 +4384,26 @@ rows = []
       "status" => bool_status(info.key?("supports_reasoning") ? !!info["supports_reasoning"] : nil, provider_reasoning, reasoning_conf)
     }
     configured_efforts = Array(info["x_reasoning_efforts"]).map(&:to_s)
+    configured_provider_efforts = Array(info["x_provider_reasoning_efforts"]).map(&:to_s)
+    effective_status = array_status(configured_efforts, effective_provider_efforts)
+    provider_status = if info.key?("x_provider_reasoning_efforts")
+      array_status(configured_provider_efforts, provider_efforts)
+    elsif provider_efforts.empty?
+      "ok"
+    else
+      "source-missing"
+    end
     row["effort"] = {
       "configured" => configured_efforts,
+      "configured_provider" => configured_provider_efforts,
       "provider" => provider_efforts,
+      "effective_provider" => effective_provider_efforts,
       "provider_source" => "openrouter.reasoning.supported_efforts",
-      "status" => array_status(configured_efforts, provider_efforts)
+      "transport_ceiling" => "high",
+      "transport_source" => "litellm-1.92-anthropic-adapter-normalizes-xhigh-max-to-high",
+      "effective_status" => effective_status,
+      "provider_status" => provider_status,
+      "status" => effective_status == "ok" ? provider_status : effective_status
     }
     route_entries = Array(config["model_list"]).select do |candidate|
       candidate.dig("litellm_params", "model").to_s == route.to_s
@@ -3256,9 +4412,9 @@ rows = []
       Array(candidate.dig("litellm_params", "allowed_openai_params")).map(&:to_s).include?("reasoning_effort")
     end
     row["effort_wire"] = {
-      "required" => !provider_efforts.empty?,
+      "required" => !effective_provider_efforts.empty?,
       "configured" => passthrough,
-      "status" => provider_efforts.empty? || passthrough ? "ok" : "missing-passthrough"
+      "status" => effective_provider_efforts.empty? || passthrough ? "ok" : "missing-passthrough"
     }
   else
     row["input"] = {
@@ -3287,7 +4443,9 @@ rows = []
     }
     row["effort"] = {
       "configured" => Array(info["x_reasoning_efforts"]).map(&:to_s),
+      "configured_provider" => Array(info["x_provider_reasoning_efforts"]).map(&:to_s),
       "provider" => nil,
+      "effective_provider" => nil,
       "provider_source" => nil,
       "status" => openrouter ? "no-provider-model" : "local-config"
     }
@@ -3304,7 +4462,7 @@ changes = []
 if apply_changes
   lines = raw_config.lines
   rows.each do |row|
-    next unless row["openrouter"] && row["provider_found"]
+    next unless row["scope"] == "package-anchor" && row["openrouter"] && row["provider_found"]
     alias_name = row["alias"]
     input = row["input"] || {}
     output = row["output"] || {}
@@ -3326,9 +4484,25 @@ if apply_changes
       changes << "#{alias_name}.x_reasoning_confidence=provider" if update_anchor_field(lines, alias_name, "x_reasoning_confidence", "provider")
       changes << "#{alias_name}.x_reasoning_source=#{reasoning["provider_source"]}" if update_anchor_field(lines, alias_name, "x_reasoning_source", reasoning["provider_source"])
     end
-    if effort["provider"].is_a?(Array) && effort["status"] != "ok"
-      if update_anchor_field(lines, alias_name, "x_reasoning_efforts", effort["provider"])
-        changes << "#{alias_name}.x_reasoning_efforts=#{effort["provider"].join(",")}"
+    effective_efforts = effort["effective_provider"]
+    if effective_efforts.is_a?(Array) && effort["effective_status"] != "ok"
+      if update_anchor_field(lines, alias_name, "x_reasoning_efforts", effective_efforts)
+        changes << "#{alias_name}.x_reasoning_efforts=#{effective_efforts.join(",")}"
+      end
+    end
+    provider_efforts = effort["provider"]
+    if provider_efforts.is_a?(Array) && effort["provider_status"] != "ok"
+      if update_anchor_field(lines, alias_name, "x_provider_reasoning_efforts", provider_efforts)
+        changes << "#{alias_name}.x_provider_reasoning_efforts=#{provider_efforts.join(",")}"
+      end
+    end
+    if provider_efforts.is_a?(Array) && !provider_efforts.empty?
+      if update_anchor_field(lines, alias_name, "x_reasoning_effort_ceiling", "high")
+        changes << "#{alias_name}.x_reasoning_effort_ceiling=high"
+      end
+      transport_source = "litellm-1.92-anthropic-adapter-normalizes-xhigh-max-to-high"
+      if update_anchor_field(lines, alias_name, "x_reasoning_transport_source", transport_source)
+        changes << "#{alias_name}.x_reasoning_transport_source=#{transport_source}"
       end
     end
   end
@@ -3400,7 +4574,9 @@ RUBY
 # --dry-run prints the full plan without writing anything or syncing.
 # AI_LITELLM_SKIP_SYNC=1 performs all writes but skips the closing sync (for
 # offline registry-only tests).
-ai_litellm_model_add() {
+ai_litellm_model_add_legacy() {
+  echo "Internal legacy mutator retired: package-generated configuration is immutable." >&2
+  return 1
   local provider_id="" custom_name="" claude_tier="" dry_run=0
 
   while (( $# > 0 )); do
@@ -3480,9 +4656,9 @@ EOF
     payload_file="$AI_LITELLM_OPENROUTER_MODELS_JSON"
     [[ -f "$payload_file" ]] || { echo "Missing AI_LITELLM_OPENROUTER_MODELS_JSON file: $payload_file" >&2; return 1; }
   else
-    payload_file="$(mktemp "${TMPDIR:-/tmp}/openrouter-models.XXXXXX.json")" || return 1
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/openrouter-models.json.XXXXXX")" || return 1
     cleanup=1
-    curl -fsSL https://openrouter.ai/api/v1/models > "$payload_file" || {
+    curl --connect-timeout 10 --max-time 60 -fsSL https://openrouter.ai/api/v1/models > "$payload_file" || {
       (( cleanup )) && rm -f "$payload_file"
       return 1
     }
@@ -3690,7 +4866,9 @@ RUBY
 # --dry-run prints the plan without writing anything or syncing.
 # AI_LITELLM_SKIP_SYNC=1 performs the write but skips the closing sync (for
 # offline registry-only tests), mirroring ai_litellm_model_add.
-ai_litellm_model_remove() {
+ai_litellm_model_remove_legacy() {
+  echo "Internal legacy mutator retired: package-generated configuration is immutable." >&2
+  return 1
   local surface="" dry_run=0
 
   while (( $# > 0 )); do
@@ -3883,6 +5061,690 @@ RUBY
   ai_litellm_sync
 }
 
+# Durable registry mutations live outside the package prefix. The tiny mkdir
+# lock serializes model+alias/sync/qualification transactions. A dead or stale
+# owner is reclaimed; a just-created directory without its PID gets a short
+# publication grace period instead of being removed by a racing process.
+ai_litellm_user_mutation_lock_acquire() {
+  ai_litellm_user_config_paths_prepare || return 1
+  typeset -g AI_LITELLM_USER_MUTATION_LOCK="$AI_LITELLM_USER_CONFIG_HOME/.mutation.lock"
+  typeset -g AI_LITELLM_USER_MUTATION_FD="${AI_LITELLM_USER_MUTATION_FD:-}"
+  if [[ "$AI_LITELLM_USER_MUTATION_FD" == <-> ]]; then
+    return 0
+  fi
+  zmodload zsh/system || return 1
+  local fd owner
+  ai_litellm_lock_file_prepare "${AI_LITELLM_USER_MUTATION_LOCK}.flock" || return 1
+  if ! zsystem flock -t 0 -f fd "${AI_LITELLM_USER_MUTATION_LOCK}.flock"; then
+    echo "Another configuration mutation is in progress." >&2
+    return 1
+  fi
+  chmod 600 "${AI_LITELLM_USER_MUTATION_LOCK}.flock" 2>/dev/null || true
+  if [[ -d "$AI_LITELLM_USER_MUTATION_LOCK" ]]; then
+    owner="$(<"$AI_LITELLM_USER_MUTATION_LOCK/pid" 2>/dev/null || printf '?')"
+    if [[ "$owner" != '?' && "$owner" != "$$" ]] && kill -0 "$owner" 2>/dev/null; then
+      zsystem flock -u "$fd" 2>/dev/null || true
+      echo "Another legacy configuration mutation is in progress (pid $owner)." >&2
+      return 1
+    fi
+    rm -rf "$AI_LITELLM_USER_MUTATION_LOCK"
+  elif [[ -e "$AI_LITELLM_USER_MUTATION_LOCK" || -L "$AI_LITELLM_USER_MUTATION_LOCK" ]]; then
+    zsystem flock -u "$fd" 2>/dev/null || true
+    echo "Unsafe configuration mutation lock path: $AI_LITELLM_USER_MUTATION_LOCK" >&2
+    return 1
+  fi
+  mkdir "$AI_LITELLM_USER_MUTATION_LOCK" || { zsystem flock -u "$fd" 2>/dev/null || true; return 1; }
+  date -u '+%Y-%m-%dT%H:%M:%SZ' > "$AI_LITELLM_USER_MUTATION_LOCK/started_at"
+  printf '%s\n' "$$" > "$AI_LITELLM_USER_MUTATION_LOCK/pid"
+  AI_LITELLM_USER_MUTATION_FD="$fd"
+}
+
+ai_litellm_user_mutation_lock_release() {
+  local lock="${AI_LITELLM_USER_MUTATION_LOCK:-}"
+  if [[ -n "$lock" && -d "$lock" && "$(<"$lock/pid" 2>/dev/null || true)" == "$$" ]]; then
+    rm -rf "$lock"
+  fi
+  if [[ "${AI_LITELLM_USER_MUTATION_FD:-}" == <-> ]]; then
+    zsystem flock -u "$AI_LITELLM_USER_MUTATION_FD" 2>/dev/null || true
+  fi
+  typeset -g AI_LITELLM_USER_MUTATION_FD=""
+}
+
+# Add an OpenRouter catalog model to the user registry. Package defaults remain
+# immutable, so upgrades can replace them while this overlay is preserved.
+ai_litellm_model_add() {
+  local provider_id="" custom_name="" claude_tier="" dry_run=0
+  while (( $# > 0 )); do
+    case "$1" in
+      --name) shift; [[ $# -gt 0 && "$1" != -* ]] || { echo "Missing value after --name" >&2; return 1; }; custom_name="$1" ;;
+      --claude-tier) shift; [[ $# -gt 0 && "$1" != -* ]] || { echo "Missing value after --claude-tier" >&2; return 1; }; claude_tier="$1" ;;
+      --dry-run) dry_run=1 ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: claude-litellm model add <openrouter-provider-id> [--name <surface>] [--claude-tier <tier>] [--dry-run]
+
+Fetch OpenRouter capabilities and add a durable user model overlay. Package
+defaults are never edited. Use `model qualify` before assigning important work.
+EOF
+        return 0 ;;
+      -*) echo "Unknown option: $1" >&2; return 1 ;;
+      *) [[ -z "$provider_id" ]] || { echo "Only one OpenRouter provider id may be added." >&2; return 1; }; provider_id="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$provider_id" ]] || { echo "Usage: claude-litellm model add <openrouter-provider-id> [options]" >&2; return 1; }
+  if [[ -n "$claude_tier" ]]; then
+    case "$claude_tier" in fable|opus|sonnet|haiku) ;; *) echo "Invalid Claude tier: $claude_tier" >&2; return 1 ;; esac
+  fi
+
+  local payload_file cleanup=0
+  if [[ -n "${AI_LITELLM_OPENROUTER_MODELS_JSON:-}" ]]; then
+    payload_file="$AI_LITELLM_OPENROUTER_MODELS_JSON"
+    [[ -f "$payload_file" ]] || { echo "Missing OpenRouter fixture: $payload_file" >&2; return 1; }
+  else
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/openrouter-models.json.XXXXXX")" || return 1
+    cleanup=1
+    curl --connect-timeout 10 --max-time 60 -fsSL https://openrouter.ai/api/v1/models > "$payload_file" || { rm -f "$payload_file"; return 1; }
+  fi
+
+  local python
+  python="$(ai_litellm_litellm_python)" || { (( cleanup )) && rm -f "$payload_file"; return 1; }
+  local backup_dir="" models_existed=0 settings_existed=0
+  if (( ! dry_run )); then
+    ai_litellm_user_mutation_lock_acquire || { (( cleanup )) && rm -f "$payload_file"; return 1; }
+    backup_dir="$(mktemp -d "${TMPDIR:-/tmp}/claude-litellm-user-model.XXXXXX")" || {
+      ai_litellm_user_mutation_lock_release; (( cleanup )) && rm -f "$payload_file"; return 1
+    }
+    if [[ -f "$AI_LITELLM_USER_MODELS" ]]; then cp -p "$AI_LITELLM_USER_MODELS" "$backup_dir/models.json"; models_existed=1; fi
+    if [[ -f "$AI_LITELLM_USER_CLAUDE_SETTINGS" ]]; then cp -p "$AI_LITELLM_USER_CLAUDE_SETTINGS" "$backup_dir/settings.json"; settings_existed=1; fi
+  fi
+
+  local out rc surface="" output_fallback="" output_cap=""
+  out="$(ai_litellm_python_isolated "$python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_USER_MODELS" "$payload_file" "$provider_id" "$custom_name" "$dry_run" <<'PY'
+import json, os, re, stat, sys, tempfile
+from pathlib import Path
+import yaml
+
+config_path, user_path_raw, catalog_path, provider_id, custom_name, dry_raw = sys.argv[1:]
+dry = dry_raw == "1"
+catalog = json.load(open(catalog_path, encoding="utf-8"))
+found = next((e for e in catalog.get("data", []) if e.get("id") == provider_id), None)
+if not found:
+    raise SystemExit(f"model not found in OpenRouter catalog: {provider_id}")
+top = found.get("top_provider") or {}
+context = top.get("context_length") or found.get("context_length")
+if not isinstance(context, int) or context <= 0:
+    raise SystemExit(f"OpenRouter did not publish a usable context limit for {provider_id}")
+published_output = top.get("max_completion_tokens")
+fallback = not isinstance(published_output, int) or published_output <= 0
+output = min(context, 32768) if fallback else published_output
+parameters = {str(v) for v in found.get("supported_parameters") or []}
+valid_efforts = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+provider_efforts = []
+for value in (found.get("reasoning") or {}).get("supported_efforts") or []:
+    if value in valid_efforts and value not in provider_efforts:
+        provider_efforts.append(value)
+# LiteLLM 1.92 normalizes xhigh/max to high when the Anthropic adapter cannot
+# find matching model-registry capability flags. Preserve the OpenRouter claim,
+# but never advertise the normalized aliases as distinct selectable levels.
+efforts = [value for value in provider_efforts if value not in {"xhigh", "max"}]
+supports_reasoning = bool({"reasoning", "reasoning_effort", "include_reasoning"} & parameters) or bool(provider_efforts)
+surface = custom_name or "-".join(part.capitalize() for part in provider_id.rsplit("/", 1)[-1].split("-")) + "-openrouter"
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}", surface):
+    raise SystemExit("surface contains unsafe characters")
+config = yaml.safe_load(open(config_path, encoding="utf-8")) or {}
+existing = {e.get("model_name") for e in config.get("model_list", []) if isinstance(e, dict)}
+if surface in existing:
+    raise SystemExit(f"model_name already exists: {surface}")
+path = Path(user_path_raw)
+if path.exists() or path.is_symlink():
+    mode = path.lstat().st_mode
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or mode & 0o077:
+        raise SystemExit(f"unsafe user model registry path or permissions: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+else:
+    payload = {"schemaVersion": 1, "models": []}
+if payload.get("schemaVersion", 1) != 1 or not isinstance(payload.get("models", []), list):
+    raise SystemExit("unsupported or malformed user model registry")
+models = payload.setdefault("models", [])
+if any(isinstance(candidate, dict) and candidate.get("model_name") == surface for candidate in models):
+    raise SystemExit(f"model_name already exists in user registry: {surface}")
+entry = {
+    "model_name": surface,
+    "litellm_params": {
+        "model": f"openrouter/{provider_id}",
+        "api_key": "os.environ/OPENROUTER_API_KEY",
+    },
+    "model_info": {
+        "max_input_tokens": context,
+        "max_output_tokens": output,
+        "supports_reasoning": supports_reasoning,
+        "x_reasoning_efforts": efforts,
+        "x_input_confidence": "provider",
+        "x_input_source": "openrouter.top_provider.context_length" if top.get("context_length") else "openrouter.context_length",
+        "x_output_confidence": "owned-policy" if fallback else "provider",
+        "x_output_source": "openrouter-unpublished; conservative default" if fallback else "openrouter.top_provider.max_completion_tokens",
+        "x_reasoning_confidence": "provider",
+        "x_reasoning_source": "openrouter.supported_parameters",
+    },
+}
+if provider_efforts:
+    entry["model_info"].update({
+        "x_provider_reasoning_efforts": provider_efforts,
+        "x_reasoning_effort_ceiling": "high",
+        "x_reasoning_transport_source": "litellm-1.92-anthropic-adapter-normalizes-xhigh-max-to-high",
+    })
+if efforts:
+    entry["litellm_params"]["allowed_openai_params"] = ["reasoning_effort"]
+print(f"claude-litellm model add {provider_id}{' (dry-run)' if dry else ''}")
+print(f"- surface: {surface}")
+print("- destination: durable user overlay")
+print(yaml.safe_dump([entry], sort_keys=False, allow_unicode=True).rstrip())
+if not dry:
+    models.append(entry)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path.parent, 0o700)
+    fd, staged_raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        json.dump(payload, stream, indent=2, ensure_ascii=False)
+        stream.write("\n")
+        stream.flush(); os.fsync(stream.fileno())
+    os.replace(staged_raw, path); os.chmod(path, 0o600)
+print(f"Surface: {surface}")
+print(f"OutputCapFallback: {'yes' if fallback else 'no'}")
+print(f"OutputCap: {output}")
+PY
+)"
+  rc=$?
+  (( cleanup )) && rm -f "$payload_file"
+  local -a display_lines
+  local line
+  for line in "${(@f)out}"; do
+    case "$line" in
+      "Surface: "*) surface="${line#Surface: }" ;;
+      "OutputCapFallback: "*) output_fallback="${line#OutputCapFallback: }" ;;
+      "OutputCap: "*) output_cap="${line#OutputCap: }" ;;
+      *) display_lines+=("$line") ;;
+    esac
+  done
+  (( ${#display_lines[@]} )) && print -r -- "${(F)display_lines}"
+
+  if (( rc == 0 && ! dry_run )); then
+    ai_litellm_render_user_config >/dev/null || rc=$?
+  fi
+  if (( rc == 0 && ! dry_run )) && [[ -n "$claude_tier" ]]; then
+    ai_litellm_harness_alias_set claude "$claude_tier" "$surface" || rc=$?
+  fi
+  if (( rc != 0 && ! dry_run )); then
+    (( models_existed )) && cp -p "$backup_dir/models.json" "$AI_LITELLM_USER_MODELS" || rm -f "$AI_LITELLM_USER_MODELS"
+    (( settings_existed )) && cp -p "$backup_dir/settings.json" "$AI_LITELLM_USER_CLAUDE_SETTINGS" || rm -f "$AI_LITELLM_USER_CLAUDE_SETTINGS"
+    ai_litellm_render_user_config >/dev/null 2>&1 || true
+  fi
+  [[ -n "$backup_dir" ]] && rm -rf "$backup_dir"
+  (( ! dry_run )) && ai_litellm_user_mutation_lock_release
+  (( rc == 0 )) || return $rc
+  (( dry_run )) && return 0
+  [[ "$output_fallback" == yes ]] && echo "Output cap was not published; conservative $output_cap is recorded and must be reviewed." >&2
+  [[ -n "${AI_LITELLM_SKIP_SYNC:-}" ]] && { echo "User overlay written; sync skipped by AI_LITELLM_SKIP_SYNC."; return 0; }
+  ai_litellm_sync
+}
+
+# Register an arbitrary LiteLLM backend without putting a credential value in
+# configuration. OpenRouter users should prefer `model add`, which discovers
+# provider metadata automatically; this command is for other LiteLLM providers
+# and explicit OpenAI-compatible endpoints.
+ai_litellm_model_register() {
+  local surface="" backend="" context="" output="" api_base="" api_key_env=""
+  local efforts="" supports_reasoning=0 dry_run=0
+  while (( $# > 0 )); do
+    case "$1" in
+      --backend) shift; [[ $# -gt 0 && "$1" != -* ]] || { echo "Missing value after --backend" >&2; return 1; }; backend="$1" ;;
+      --context) shift; [[ $# -gt 0 && "$1" != -* ]] || { echo "Missing value after --context" >&2; return 1; }; context="$1" ;;
+      --output) shift; [[ $# -gt 0 && "$1" != -* ]] || { echo "Missing value after --output" >&2; return 1; }; output="$1" ;;
+      --api-base) shift; [[ $# -gt 0 && "$1" != -* ]] || { echo "Missing value after --api-base" >&2; return 1; }; api_base="$1" ;;
+      --api-key-env) shift; [[ $# -gt 0 && "$1" != -* ]] || { echo "Missing value after --api-key-env" >&2; return 1; }; api_key_env="$1" ;;
+      --reasoning-efforts) shift; [[ $# -gt 0 && "$1" != -* ]] || { echo "Missing value after --reasoning-efforts" >&2; return 1; }; efforts="$1" ;;
+      --supports-reasoning) supports_reasoning=1 ;;
+      --dry-run) dry_run=1 ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: claude-litellm model register <surface> --backend <litellm/model> --context N --output N [options]
+
+Options:
+  --api-base <https-or-loopback-url>   Explicit compatible endpoint
+  --api-key-env <ENV_VAR|none>         Required credential reference; never a key value
+  --supports-reasoning                 Declare non-selectable reasoning support
+  --reasoning-efforts <csv>            none,minimal,low,medium,high
+                                       xhigh/max are blocked: LiteLLM 1.92
+                                       normalizes unqualified values to high
+  --dry-run                            Validate and print without writing
+
+Run `model qualify` before assigning this route to a Claude tier.
+EOF
+        return 0 ;;
+      -*) echo "Unknown option: $1" >&2; return 1 ;;
+      *) [[ -z "$surface" ]] || { echo "Only one surface name may be registered." >&2; return 1; }; surface="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$surface" && -n "$backend" && "$context" == <-> && "$output" == <-> && \
+     "$context" -gt 0 && "$output" -gt 0 ]] || {
+    echo "Usage: claude-litellm model register <surface> --backend <provider/model> --context N --output N [options]" >&2
+    return 1
+  }
+  [[ -n "$api_key_env" ]] || {
+    echo "--api-key-env ENV_VAR|none is required so provider credentials are explicit" >&2
+    return 1
+  }
+  case "$api_key_env" in
+    ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|LITELLM_API_KEY|LITELLM_MASTER_KEY|XAI_API_KEY)
+      echo "--api-key-env $api_key_env is reserved for the local gateway" >&2
+      return 1
+      ;;
+  esac
+
+  local python backup="" existed=0 rc=0
+  python="$(ai_litellm_litellm_python 2>/dev/null)" || return 1
+  if (( ! dry_run )); then
+    ai_litellm_user_mutation_lock_acquire || return 1
+    backup="$(mktemp "${TMPDIR:-/tmp}/claude-litellm-register.json.XXXXXX")" || {
+      ai_litellm_user_mutation_lock_release
+      return 1
+    }
+    if [[ -f "$AI_LITELLM_USER_MODELS" ]]; then
+      cp -p "$AI_LITELLM_USER_MODELS" "$backup"
+      existed=1
+    fi
+  fi
+
+  ai_litellm_python_isolated "$python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_USER_MODELS" "$surface" "$backend" \
+    "$context" "$output" "$api_base" "$api_key_env" "$supports_reasoning" "$efforts" "$dry_run" <<'PY' || rc=$?
+import json, os, re, stat, sys, tempfile
+from pathlib import Path
+from urllib.parse import urlparse
+import yaml
+
+(
+    config_raw, user_raw, surface, backend, context_raw, output_raw,
+    api_base, api_key_env, supports_raw, efforts_raw, dry_raw,
+) = sys.argv[1:]
+dry = dry_raw == "1"
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}", surface):
+    raise SystemExit("surface contains unsafe characters")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*/[^\s/][^\s]*", backend):
+    raise SystemExit("backend must be an explicit provider/model LiteLLM identifier")
+if not api_key_env:
+    raise SystemExit("--api-key-env ENV_VAR|none is required so provider credentials are explicit")
+if api_key_env != "none" and not re.fullmatch(r"[A-Z][A-Z0-9_]*", api_key_env):
+    raise SystemExit("--api-key-env must be an uppercase environment variable name or none")
+if api_key_env in {"ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "LITELLM_API_KEY", "LITELLM_MASTER_KEY", "XAI_API_KEY"}:
+    raise SystemExit(f"--api-key-env {api_key_env} is reserved for the local gateway")
+control_prefixes = ("AI_LITELLM_", "CLAUDE_LITELLM_", "CHATGPT_", "XAI_OAUTH_", "LITELLM_")
+control_suffixes = ("_DIR", "_PATH", "_HOME", "_CONFIG", "_FILE", "_ROOT", "_URL", "_HOST", "_PORT", "_ENABLED", "_MODEL")
+secret_marker = re.compile(
+    r"(?:^|_)(?:API_?KEY|APIKEY|TOKEN|SECRET|PASSWORD|PRIVATE_KEY|CREDENTIALS?|ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)(?:_|$)"
+)
+if api_key_env != "none" and (
+    api_key_env.startswith(control_prefixes)
+    or api_key_env.endswith(control_suffixes)
+    or not (
+        secret_marker.search(api_key_env)
+        or api_key_env.endswith("APIKEY")
+        or api_key_env.endswith("_KEY")
+    )
+):
+    raise SystemExit("--api-key-env must name a dedicated provider credential variable")
+if api_base:
+    parsed = urlparse(api_base)
+    if (
+        not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or not (
+            parsed.scheme == "https"
+            or (parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"})
+        )
+    ):
+        raise SystemExit("--api-base must use HTTPS or loopback HTTP and contain no credentials/query/fragment")
+valid_efforts = {"none", "minimal", "low", "medium", "high"}
+efforts = [value.strip() for value in efforts_raw.split(",") if value.strip()]
+if len(efforts) != len(set(efforts)) or any(value not in valid_efforts for value in efforts):
+    raise SystemExit(
+        "invalid or duplicate --reasoning-efforts value; allowed: "
+        "none,minimal,low,medium,high (LiteLLM 1.92 normalizes "
+        "unqualified xhigh/max to high)"
+    )
+supports = supports_raw == "1" or bool(efforts)
+config = yaml.safe_load(Path(config_raw).read_text(encoding="utf-8")) or {}
+if any(entry.get("model_name") == surface for entry in config.get("model_list", [])):
+    raise SystemExit(f"model_name already exists: {surface}")
+params = {"model": backend}
+if api_base:
+    params["api_base"] = api_base
+if api_key_env:
+    params["api_key"] = "none" if api_key_env == "none" else f"os.environ/{api_key_env}"
+if efforts:
+    params["allowed_openai_params"] = ["reasoning_effort"]
+entry = {
+    "model_name": surface,
+    "litellm_params": params,
+    "model_info": {
+        "max_input_tokens": int(context_raw),
+        "max_output_tokens": int(output_raw),
+        "supports_reasoning": supports,
+        "x_reasoning_efforts": efforts,
+        "x_input_confidence": "user-declared",
+        "x_input_source": "model-register; qualify-and-verify",
+        "x_output_confidence": "user-declared",
+        "x_output_source": "model-register; qualify-and-verify",
+        "x_reasoning_confidence": "user-declared",
+        "x_reasoning_source": "model-register; qualify-and-verify",
+    },
+}
+path = Path(user_raw)
+if path.exists() or path.is_symlink():
+    mode = path.lstat().st_mode
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or stat.S_IMODE(mode) != 0o600:
+        raise SystemExit(f"unsafe user model registry: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+else:
+    payload = {"schemaVersion": 1, "models": []}
+if payload.get("schemaVersion", 1) != 1 or not isinstance(payload.get("models", []), list):
+    raise SystemExit("unsupported or malformed user model registry")
+models = payload.setdefault("models", [])
+if any(isinstance(candidate, dict) and candidate.get("model_name") == surface for candidate in models):
+    raise SystemExit(f"model_name already exists in user registry: {surface}")
+print(yaml.safe_dump([entry], sort_keys=False, allow_unicode=True).rstrip())
+if dry:
+    raise SystemExit(0)
+models.append(entry)
+path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+os.chmod(path.parent, 0o700)
+fd, staged_raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    os.fchmod(stream.fileno(), 0o600)
+    json.dump(payload, stream, indent=2, ensure_ascii=False)
+    stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+os.replace(staged_raw, path); os.chmod(path, 0o600)
+PY
+  if (( rc == 0 && ! dry_run )); then
+    ai_litellm_render_user_config >/dev/null || rc=$?
+  fi
+  if (( rc != 0 && ! dry_run )); then
+    (( existed )) && cp -p "$backup" "$AI_LITELLM_USER_MODELS" || rm -f "$AI_LITELLM_USER_MODELS"
+    ai_litellm_render_user_config >/dev/null 2>&1 || true
+  fi
+  [[ -n "$backup" ]] && rm -f "$backup"
+  (( ! dry_run )) && ai_litellm_user_mutation_lock_release
+  (( rc == 0 )) || return $rc
+  (( dry_run )) && return 0
+  echo "Registered durable user route: $surface -> $backend"
+  [[ -n "${AI_LITELLM_SKIP_SYNC:-}" ]] && return 0
+  ai_litellm_sync
+}
+
+# Remove only a user-owned route. Built-ins, OAuth routes and runtime-discovered
+# routes are immutable through this command and therefore always recoverable.
+ai_litellm_model_remove() {
+  local surface="" dry_run=0
+  while (( $# > 0 )); do
+    case "$1" in
+      --dry-run) dry_run=1 ;;
+      -h|--help) echo "Usage: claude-litellm model remove <user-surface> [--dry-run]"; return 0 ;;
+      -*) echo "Unknown option: $1" >&2; return 1 ;;
+      *) [[ -z "$surface" ]] || { echo "Only one model may be removed." >&2; return 1; }; surface="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$surface" ]] || { echo "Usage: claude-litellm model remove <user-surface> [--dry-run]" >&2; return 1; }
+  local aliases="" python
+  python="$(ai_litellm_litellm_python)" || return 1
+  local backup="" existed=0
+  if (( ! dry_run )); then
+    ai_litellm_user_mutation_lock_acquire || return 1
+    backup="$(mktemp "${TMPDIR:-/tmp}/claude-litellm-models.json.XXXXXX")" || { ai_litellm_user_mutation_lock_release; return 1; }
+    if [[ -f "$AI_LITELLM_USER_MODELS" ]]; then cp -p "$AI_LITELLM_USER_MODELS" "$backup"; existed=1; fi
+  fi
+  aliases="$(ai_litellm_harness_alias_json claude 2>/dev/null || printf '[]')"
+  ai_litellm_python_isolated "$python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_USER_MODELS" "$surface" "$dry_run" "$aliases" <<'PY'
+import json, os, stat, sys, tempfile
+from pathlib import Path
+import yaml
+config_path, user_raw, surface, dry_raw, aliases_raw = sys.argv[1:]
+dry = dry_raw == "1"
+path = Path(user_raw)
+if path.exists() or path.is_symlink():
+    mode = path.lstat().st_mode
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or stat.S_IMODE(mode) != 0o600:
+        raise SystemExit(f"unsafe user model registry: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+else:
+    payload = {"schemaVersion": 1, "models": []}
+models = payload.get("models", [])
+index = next((i for i, e in enumerate(models) if e.get("model_name") == surface), None)
+if index is None:
+    config = yaml.safe_load(open(config_path, encoding="utf-8")) or {}
+    known = any(e.get("model_name") == surface for e in config.get("model_list", []) if isinstance(e, dict))
+    raise SystemExit(f"{surface}: package/runtime model is immutable; only user overlay models can be removed" if known else f"model not found: {surface}")
+aliases = json.loads(aliases_raw or "[]")
+tiers = [row.get("tier") for row in aliases if row.get("model") == surface]
+if tiers:
+    raise SystemExit(f"{surface}: referenced by Claude tier(s) {', '.join(tiers)}; reassign first")
+target = models[index]
+print(f"claude-litellm model remove {surface}{' (dry-run)' if dry else ''}")
+print(json.dumps(target, indent=2, ensure_ascii=False))
+if not dry:
+    del models[index]
+    fd, staged_raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        json.dump(payload, stream, indent=2, ensure_ascii=False); stream.write("\n")
+        stream.flush(); os.fsync(stream.fileno())
+    os.replace(staged_raw, path); os.chmod(path, 0o600)
+PY
+  local rc=$?
+  if (( rc == 0 && ! dry_run )); then ai_litellm_render_user_config >/dev/null || rc=$?; fi
+  if (( rc != 0 && ! dry_run )); then
+    (( existed )) && cp -p "$backup" "$AI_LITELLM_USER_MODELS" || rm -f "$AI_LITELLM_USER_MODELS"
+    ai_litellm_render_user_config >/dev/null 2>&1 || true
+  fi
+  [[ -n "$backup" ]] && rm -f "$backup"
+  (( ! dry_run )) && ai_litellm_user_mutation_lock_release
+  (( rc == 0 )) || return $rc
+  (( dry_run )) && return 0
+  [[ -n "${AI_LITELLM_SKIP_SYNC:-}" ]] && { echo "User overlay written; sync skipped by AI_LITELLM_SKIP_SYNC."; return 0; }
+  ai_litellm_sync
+}
+
+# Exercise the exact Anthropic Messages surface Claude Code consumes. A model
+# is qualified only after text SSE, forced tool_use, streamed input_json_delta,
+# and a tool_result continuation all pass with a 128-token response allowance.
+# Optional activation is deliberately last so a failed candidate never replaces
+# a working Claude tier.
+_ai_litellm_model_qualify_unlocked() {
+  local model="" activate_tier="" as_json=0
+  while (( $# > 0 )); do
+    case "$1" in
+      --activate-tier)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value after --activate-tier" >&2; return 1; }
+        activate_tier="$1"
+        ;;
+      --json) as_json=1 ;;
+      -h|--help)
+        cat <<'EOF'
+Usage: claude-litellm model qualify <surface> [--activate-tier fable|opus|sonnet|haiku] [--json]
+
+Run the five live /v1/messages compatibility gates. Cloud routes can incur a
+small provider charge. --activate-tier changes the Claude alias only on PASS.
+EOF
+        return 0
+        ;;
+      -*) echo "Unknown option: $1" >&2; return 1 ;;
+      *) [[ -z "$model" ]] || { echo "Only one model may be qualified." >&2; return 1; }; model="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$model" ]] || { echo "Usage: claude-litellm model qualify <surface> [options]" >&2; return 1; }
+  if [[ -n "$activate_tier" ]]; then
+    case "$activate_tier" in fable|opus|sonnet|haiku) ;; *) echo "Invalid Claude tier: $activate_tier" >&2; return 1 ;; esac
+  fi
+
+  model="$(ai_litellm_model_resolve "$model" 2>/dev/null)" || {
+    echo "Unknown LiteLLM model_name or provider model: $model" >&2
+    return 1
+  }
+  local verifier="$AI_LITELLM_HOME/scripts/verify_tool_call_fidelity.py"
+  [[ -f "$verifier" ]] || { echo "Missing live qualification harness: $verifier" >&2; return 1; }
+  local python master_key backend
+  python="$(ai_litellm_litellm_python 2>/dev/null)" || {
+    echo "Missing managed LiteLLM Python runtime." >&2
+    return 1
+  }
+  master_key="$(ai_litellm_master_key 2>/dev/null)" || {
+    echo "Missing LiteLLM master key." >&2
+    return 1
+  }
+  # Freeze route identity before the closing sync and re-resolve after taking
+  # the lock. A remove/re-add racing the initial CLI parse must never attach
+  # evidence for an old backend to a newly served surface.
+  ai_litellm_user_mutation_lock_acquire || return 1
+  model="$(ai_litellm_model_resolve "$model" 2>/dev/null)" || {
+    ai_litellm_user_mutation_lock_release
+    echo "Model disappeared before qualification started." >&2
+    return 1
+  }
+  backend="$(ai_litellm_model_backend "$model" 2>/dev/null || printf unknown)"
+
+  # Rebuild runtime-discovered routes while the model transaction lock is held.
+  # sync recognizes the pre-owned kernel lock and remains reentrant.
+  ai_litellm_sync >/dev/null || { local sync_rc=$?; ai_litellm_user_mutation_lock_release; return $sync_rc; }
+  if ! ai_litellm_health; then
+    ai_litellm_start >/dev/null || { local start_rc=$?; ai_litellm_user_mutation_lock_release; return $start_rc; }
+  fi
+
+  # Keep the lock across the exact live exchange, evidence write, and optional
+  # alias update.
+  ai_litellm_model_runtime "$model" >/dev/null 2>&1 || \
+    echo "Live qualification may issue billable provider requests for $model." >&2
+  local verdict rc
+  verdict="$(LITELLM_MASTER_KEY="$master_key" ai_litellm_run_timeout 300 "$python" -I -B "$verifier" \
+    --live-only --live-model "$model" --live-base-url "$(ai_litellm_base_url)" --json)"
+  rc=$?
+  if (( as_json )); then
+    print -r -- "$verdict"
+  else
+    print -r -- "$verdict" | jq -r '
+      .live as $v |
+      "Live /v1/messages qualification (\($v.model)):",
+      "  text SSE                    " + (if $v.text_sse then "PASS" else "FAIL" end),
+      "  forced structured tool     " + (if $v.forced_structured_tool then "PASS" else "FAIL" end),
+      "  streaming input_json_delta " + (if $v.streaming_input_json_delta then "PASS" else "FAIL" end),
+      "  tool_result continuation   " + (if $v.tool_result_continuation then "PASS" else "FAIL" end),
+      "=> " + (if .all_critical_pass then "QUALIFIED" else "FAILED" end)'
+  fi
+  if (( rc != 0 )); then
+    ai_litellm_user_mutation_lock_release
+    return $rc
+  fi
+
+  mkdir -p "$AI_LITELLM_PROXY_HOME"
+  chmod 700 "$AI_LITELLM_PROXY_HOME"
+  ai_litellm_python_isolated "$python" - "$AI_LITELLM_QUALIFICATIONS_FILE" "$AI_LITELLM_CONFIG" "$model" "$backend" "$verdict" <<'PY'
+import hashlib, json, os, sys, tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+import stat
+
+state_raw, config_raw, model, backend, verdict_raw = sys.argv[1:]
+state_path, config_path = Path(state_raw), Path(config_raw)
+if state_path.exists() or state_path.is_symlink():
+    mode = state_path.lstat().st_mode
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or stat.S_IMODE(mode) != 0o600:
+        raise SystemExit(f"unsafe qualification state file: {state_path}")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+else:
+    state = {"schemaVersion": 1, "models": {}}
+if state.get("schemaVersion") != 1 or not isinstance(state.get("models"), dict):
+    raise SystemExit("unsupported or malformed qualification state")
+state.setdefault("models", {})[model] = {
+    "qualifiedAt": datetime.now(timezone.utc).isoformat(),
+    "providerModel": backend,
+    "configSha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+    "gates": json.loads(verdict_raw)["live"],
+}
+state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+fd, staged_raw = tempfile.mkstemp(prefix=f".{state_path.name}.", dir=state_path.parent)
+with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    os.fchmod(stream.fileno(), 0o600)
+    json.dump(state, stream, indent=2, ensure_ascii=False)
+    stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+os.replace(staged_raw, state_path); os.chmod(state_path, 0o600)
+PY
+  rc=$?
+  if (( rc != 0 )); then
+    ai_litellm_user_mutation_lock_release
+    echo "Failed to persist qualification evidence; Claude aliases were not changed." >&2
+    return $rc
+  fi
+
+  if [[ -n "$activate_tier" ]]; then
+    local activation_backup activation_settings_existed=0
+    activation_backup="$(mktemp "${TMPDIR:-/tmp}/claude-litellm-qualification-settings.json.XXXXXX")" || {
+      ai_litellm_user_mutation_lock_release
+      return 1
+    }
+    if [[ -f "$AI_LITELLM_USER_CLAUDE_SETTINGS" ]]; then
+      cp -p "$AI_LITELLM_USER_CLAUDE_SETTINGS" "$activation_backup"
+      activation_settings_existed=1
+    fi
+    if (( as_json )); then
+      ai_litellm_harness_alias_set claude "$activate_tier" "$model" >/dev/null || {
+        rc=$?; rm -f "$activation_backup"; ai_litellm_user_mutation_lock_release; return $rc
+      }
+    else
+      ai_litellm_harness_alias_set claude "$activate_tier" "$model" || {
+        rc=$?; rm -f "$activation_backup"; ai_litellm_user_mutation_lock_release; return $rc
+      }
+    fi
+    if ai_litellm_sync >/dev/null; then
+      :
+    else
+      rc=$?
+      (( activation_settings_existed )) && cp -p "$activation_backup" "$AI_LITELLM_USER_CLAUDE_SETTINGS" || rm -f "$AI_LITELLM_USER_CLAUDE_SETTINGS"
+      ai_litellm_render_user_config >/dev/null 2>&1 || true
+      ai_litellm_render_claude_settings claude >/dev/null 2>&1 || true
+      rm -f "$activation_backup"
+      ai_litellm_user_mutation_lock_release
+      echo "Qualification passed, but activation sync failed; the Claude alias was rolled back." >&2
+      return $rc
+    fi
+    rm -f "$activation_backup"
+    ai_litellm_user_mutation_lock_release
+    (( as_json )) || echo "Activated Claude $activate_tier -> $model after qualification."
+  else
+    ai_litellm_user_mutation_lock_release
+  fi
+}
+
+ai_litellm_model_qualify() {
+  ai_litellm_lifecycle_lock_acquire || return $?
+  local rc=0 mutation_preowned=0
+  [[ "${AI_LITELLM_USER_MUTATION_FD:-}" == <-> ]] && mutation_preowned=1
+  {
+    _ai_litellm_model_qualify_unlocked "$@" || rc=$?
+  } always {
+    if (( ! mutation_preowned )) && [[ "${AI_LITELLM_USER_MUTATION_FD:-}" == <-> ]]; then
+      ai_litellm_user_mutation_lock_release
+    fi
+    ai_litellm_lifecycle_lock_release
+  }
+  return $rc
+}
+
 # Provider/backend reasoning capability table from the LiteLLM registry. It
 # shows route-level defaults before any harness intent is considered.
 ai_litellm_model_reasoning_table() {
@@ -3893,7 +5755,7 @@ ai_litellm_model_reasoning_table() {
     return 1
   }
 
-  "$litellm_python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_REASONING_OBS_FILE" "$filter" <<'PY'
+  ai_litellm_python_isolated "$litellm_python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_REASONING_OBS_FILE" "$filter" <<'PY'
 import json
 import os
 import sys
@@ -3979,8 +5841,6 @@ def local_wire(declared, params):
 def drop_risk(declared, local_supported, observed):
     if not declared:
         return "-"
-    if observed and observed.get("status") == "observed":
-        return "low(obs)"
     if local_supported:
         return "low"
     return "high(drop)" if drop_params else "high(error)"
@@ -3994,7 +5854,7 @@ def raw_observed_for(name, backend):
         if not observed_backend or observed_backend == backend:
             return obs
     for candidate in models.values():
-        if candidate.get("provider_model") == backend and candidate.get("status") == "observed":
+        if candidate.get("provider_model") == backend:
             return candidate
     return None
 
@@ -4005,10 +5865,14 @@ def observed_for(name, backend):
         return "-"
     status = obs.get("status") or "unknown"
     tokens = obs.get("reasoning_tokens")
+    if status == "accepted_with_reasoning":
+        return f"accept+r({tokens or 0})"
+    if status == "accepted_without_reasoning_evidence":
+        return "accept(no-r)"
     if status == "observed":
-        return f"yes({tokens or 0})"
+        return f"legacy+r({tokens or 0})"
     if status == "not_observed":
-        return f"no({tokens or 0})"
+        return "legacy(no-r)"
     if status == "error":
         return "error"
     return status
@@ -4037,7 +5901,7 @@ for entry in config.get("model_list") or []:
         "effort": provider_default(entry),
         "localWire": local_wire(declared, params),
         "dropRisk": drop_risk(declared, local_supported, raw_observed_for(name, backend)),
-        "observed": observed_for(name, backend),
+        "probe": observed_for(name, backend),
     })
 
 if emit_json:
@@ -4053,7 +5917,7 @@ else:
             "default",
             "local_wire",
             "drop_risk",
-            "observed",
+            "probe",
         )
     )
     for row in rows:
@@ -4067,7 +5931,7 @@ else:
                 row["default"],
                 row["localWire"],
                 row["dropRisk"],
-                row["observed"],
+                row["probe"],
             )
         )
 PY
@@ -4107,6 +5971,7 @@ errors = []
 Array(config["model_list"]).each do |entry|
   name = entry["model_name"].to_s
   info = entry["model_info"] || {}
+  backend = entry.dig("litellm_params", "model").to_s
   efforts = info["x_reasoning_efforts"]
   unless efforts.is_a?(Array)
     errors << "#{name}: model_info.x_reasoning_efforts must be an array"
@@ -4118,6 +5983,29 @@ Array(config["model_list"]).each do |entry|
   errors << "#{name}: invalid x_reasoning_efforts #{unknown.join(",")}" unless unknown.empty?
   supports = info["supports_reasoning"] == true
   errors << "#{name}: effort levels require supports_reasoning=true" if !supports && !values.empty?
+  transport_limited = backend.start_with?("openrouter/") || info["x_registry_source"] == "user-overlay"
+  blocked = values & %w[xhigh max]
+  if transport_limited && !blocked.empty?
+    errors << "#{name}: #{blocked.join(",")} cannot be selectable; LiteLLM 1.92 normalizes unqualified xhigh/max to high"
+  end
+  if info.key?("x_provider_reasoning_efforts")
+    provider_efforts = info["x_provider_reasoning_efforts"]
+    unless provider_efforts.is_a?(Array)
+      errors << "#{name}: model_info.x_provider_reasoning_efforts must be an array"
+    else
+      provider_values = provider_efforts.map(&:to_s)
+      errors << "#{name}: duplicate x_provider_reasoning_efforts" unless provider_values.uniq == provider_values
+      provider_unknown = provider_values - valid
+      errors << "#{name}: invalid x_provider_reasoning_efforts #{provider_unknown.join(",")}" unless provider_unknown.empty?
+      expected = provider_values.reject { |value| %w[xhigh max].include?(value) }
+      if transport_limited && values != expected
+        errors << "#{name}: selectable efforts must equal provider efforts after the high transport ceiling"
+      end
+      errors << "#{name}: x_reasoning_effort_ceiling must be high" unless info["x_reasoning_effort_ceiling"] == "high"
+      source = info["x_reasoning_transport_source"]
+      errors << "#{name}: x_reasoning_transport_source is required" unless source.is_a?(String) && !source.empty?
+    end
+  end
   allowed_params = Array(entry.dig("litellm_params", "allowed_openai_params")).map(&:to_s)
   if allowed_params.include?("reasoning_effort") && values.empty?
     errors << "#{name}: reasoning_effort passthrough requires explicit effort levels"
@@ -4136,7 +6024,9 @@ ai_litellm_model_reasoning_allowed_json() {
   ai_litellm_ruby -rjson -e 'puts JSON.generate(ARGV[0].to_s.split)' "$allowed" 2>/dev/null || printf '[]'
 }
 
-ai_litellm_model_reasoning_update() {
+ai_litellm_model_reasoning_update_legacy() {
+  echo "Internal legacy mutator retired: package-generated configuration is immutable." >&2
+  return 1
   local mode="$1"
   local model="$2"
   local effort="${3:-}"
@@ -4244,6 +6134,105 @@ STDOUT.puts(mode == "set" ? "Applied to: #{targets.join(", ")}" : "Cleared: #{ta
   echo "Run 'claude-litellm sync' to apply it to the running proxy."
 }
 
+# Provider defaults are mutable only for user-owned routes. Package routes are
+# release defaults; changing their generated effective YAML would be lost on
+# the next sync. Claude's per-launch --effort or the durable harness default is
+# the correct control for those built-ins.
+ai_litellm_model_reasoning_update() {
+  local mode="$1" model="$2" effort="${3:-}"
+  if [[ -z "$mode" || -z "$model" || ( "$mode" == set && -z "$effort" ) ]]; then
+    echo "Usage: claude-litellm model reasoning set <user-model> <effort>" >&2
+    echo "       claude-litellm model reasoning unset <user-model>" >&2
+    return 1
+  fi
+  model="$(ai_litellm_model_resolve "$model" 2>/dev/null)" || {
+    echo "Unknown LiteLLM model_name or provider model: $model" >&2
+    return 1
+  }
+  if [[ "$mode" == set ]]; then
+    local allowed
+    allowed="$(ai_litellm_model_reasoning_allowed_efforts "$model")" || return $?
+    case " $allowed " in
+      *" $effort "*) ;;
+      *) echo "Unsupported provider reasoning effort for $model: $effort (allowed: ${allowed// /, })" >&2; return 1 ;;
+    esac
+  fi
+
+  local python backup="" existed=0 rc=0
+  python="$(ai_litellm_litellm_python 2>/dev/null)" || return 1
+  ai_litellm_user_mutation_lock_acquire || return 1
+  backup="$(mktemp "${TMPDIR:-/tmp}/claude-litellm-model-reasoning.json.XXXXXX")" || {
+    ai_litellm_user_mutation_lock_release
+    return 1
+  }
+  if [[ -f "$AI_LITELLM_USER_MODELS" ]]; then
+    cp -p "$AI_LITELLM_USER_MODELS" "$backup"
+    existed=1
+  fi
+
+  ai_litellm_python_isolated "$python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_USER_MODELS" "$mode" "$model" "$effort" <<'PY' || rc=$?
+import json, os, stat, sys, tempfile
+from pathlib import Path
+import yaml
+
+config_raw, user_raw, mode, model, effort = sys.argv[1:]
+config = yaml.safe_load(Path(config_raw).read_text(encoding="utf-8")) or {}
+target = next((e for e in config.get("model_list", []) if e.get("model_name") == model), None)
+if target is None:
+    raise SystemExit(f"unknown model: {model}")
+backend = (target.get("litellm_params") or {}).get("model")
+path = Path(user_raw)
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(
+        f"{model}: package/runtime route is immutable; use Claude --effort "
+        "or add a user-owned route"
+    )
+file_stat = path.lstat()
+if stat.S_IMODE(file_stat.st_mode) != 0o600:
+    raise SystemExit(f"unsafe user model registry permissions: {path}")
+payload = json.loads(path.read_text(encoding="utf-8"))
+targets = [
+    entry for entry in payload.get("models", [])
+    if (entry.get("litellm_params") or {}).get("model") == backend
+]
+if not targets:
+    raise SystemExit(
+        f"{model}: package/runtime route is immutable; use Claude --effort "
+        "or add a user-owned route"
+    )
+for entry in targets:
+    params = entry.setdefault("litellm_params", {})
+    params.pop("reasoning", None)
+    if mode == "set":
+        params["reasoning_effort"] = effort
+    else:
+        params.pop("reasoning_effort", None)
+fd, staged_raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    os.fchmod(stream.fileno(), 0o600)
+    json.dump(payload, stream, indent=2, ensure_ascii=False)
+    stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+os.replace(staged_raw, path); os.chmod(path, 0o600)
+print(
+    ("Applied to: " if mode == "set" else "Cleared: ")
+    + ", ".join(entry["model_name"] for entry in targets)
+)
+PY
+  if (( rc == 0 )); then
+    ai_litellm_render_user_config >/dev/null || rc=$?
+  fi
+  if (( rc != 0 )); then
+    (( existed )) && cp -p "$backup" "$AI_LITELLM_USER_MODELS" || rm -f "$AI_LITELLM_USER_MODELS"
+    ai_litellm_render_user_config >/dev/null 2>&1 || true
+  fi
+  rm -f "$backup"
+  ai_litellm_user_mutation_lock_release
+  (( rc == 0 )) || return $rc
+  echo "Updated durable provider reasoning default for $model."
+  [[ -n "${AI_LITELLM_SKIP_SYNC:-}" ]] && return 0
+  ai_litellm_sync
+}
+
 ai_litellm_model_reasoning_set() {
   ai_litellm_model_reasoning_update set "$@"
 }
@@ -4254,21 +6243,43 @@ ai_litellm_model_reasoning_unset() {
 
 ai_litellm_reasoning_observation_record() {
   local observation_json="$1"
+  local safe_dir
+  for safe_dir in "$AI_LITELLM_STATE_HOME" "$AI_LITELLM_PROXY_HOME"; do
+    if [[ -e "$safe_dir" || -L "$safe_dir" ]]; then
+      [[ -d "$safe_dir" && ! -L "$safe_dir" ]] || {
+        echo "Refusing unsafe reasoning evidence directory: $safe_dir" >&2
+        return 1
+      }
+    fi
+  done
   mkdir -p "$AI_LITELLM_PROXY_HOME"
+  chmod 700 "$AI_LITELLM_STATE_HOME" "$AI_LITELLM_PROXY_HOME" 2>/dev/null || true
+  if [[ -e "$AI_LITELLM_REASONING_OBS_FILE" || -L "$AI_LITELLM_REASONING_OBS_FILE" ]]; then
+    [[ -f "$AI_LITELLM_REASONING_OBS_FILE" && ! -L "$AI_LITELLM_REASONING_OBS_FILE" && \
+       "$(stat -f %Lp "$AI_LITELLM_REASONING_OBS_FILE" 2>/dev/null)" == "600" ]] || {
+      echo "Refusing unsafe reasoning evidence file: $AI_LITELLM_REASONING_OBS_FILE" >&2
+      return 1
+    }
+  fi
   node -e '
 const fs = require("fs");
 const [file, raw] = process.argv.slice(1);
 const observation = JSON.parse(raw);
-let state = {models: {}};
+let state = {models: {}, history: []};
 try {
   state = JSON.parse(fs.readFileSync(file, "utf8"));
-} catch (_) {}
-if (!state || typeof state !== "object" || Array.isArray(state)) state = {models: {}};
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+if (!state || typeof state !== "object" || Array.isArray(state)) state = {models: {}, history: []};
 if (!state.models || typeof state.models !== "object" || Array.isArray(state.models)) state.models = {};
+if (!Array.isArray(state.history)) state.history = [];
 state.models[observation.model_name] = observation;
+state.history.push(observation);
+state.history = state.history.slice(-100);
 const tmp = `${file}.tmp.${process.pid}`;
 try {
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", {mode: 0o600});
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", {mode: 0o600, flag: "wx"});
   fs.renameSync(tmp, file);
 } catch (error) {
   try { fs.unlinkSync(tmp); } catch (_) {}
@@ -4277,11 +6288,22 @@ try {
 ' "$AI_LITELLM_REASONING_OBS_FILE" "$observation_json"
 }
 
-ai_litellm_model_reasoning_probe() {
-  local model="$1"
-  local effort="${2:-xhigh}"
+_ai_litellm_model_reasoning_probe_unlocked() {
+  local model="" effort="" candidate=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --candidate) candidate=1 ;;
+      -*) echo "Unknown reasoning probe option: $arg" >&2; return 1 ;;
+      *)
+        if [[ -z "$model" ]]; then model="$arg"
+        elif [[ -z "$effort" ]]; then effort="${arg:l}"
+        else echo "Usage: claude-litellm model reasoning probe <model> [effort] [--candidate]" >&2; return 1
+        fi
+        ;;
+    esac
+  done
   if [[ -z "$model" ]]; then
-    echo "Usage: claude-litellm model reasoning probe <model> [effort]" >&2
+    echo "Usage: claude-litellm model reasoning probe <model> [effort] [--candidate]" >&2
     return 1
   fi
 
@@ -4289,15 +6311,38 @@ ai_litellm_model_reasoning_probe() {
     echo "Unknown LiteLLM model_name or provider model: $model" >&2
     return 1
   }
-  local allowed
-  allowed="$(ai_litellm_model_reasoning_allowed_efforts "$model")" || return $?
-  case " $allowed " in
-    *" $effort "*) ;;
-    *)
-      echo "Unsupported reasoning effort for probe: $effort (allowed: ${allowed// /, })" >&2
-      return 1
-      ;;
-  esac
+  local allowed=""
+  if (( candidate )); then
+    [[ -n "$effort" ]] || effort=medium
+    case "$effort" in
+      low|medium|high|xhigh|max) ;;
+      *) echo "Candidate Claude effort must be low, medium, high, xhigh, or max." >&2; return 1 ;;
+    esac
+    echo "Experimental candidate probe: a 2xx only proves that the request shape was accepted." >&2
+    echo "It does not prove effort was forwarded or honored, nor that exploration changed; compare repeated low/high runs and inspect an outbound provider trace. Capability metadata is unchanged." >&2
+  else
+    allowed="$(ai_litellm_model_reasoning_allowed_efforts "$model")" || return $?
+  fi
+  if (( ! candidate )) && [[ -z "$effort" ]]; then
+    # Pick a broadly supported, non-extreme level. Provider contracts differ
+    # (for example Grok omits xhigh), so a global xhigh default creates false
+    # probe failures before any request reaches the model.
+    case " $allowed " in
+      *" medium "*) effort=medium ;;
+      *" high "*) effort=high ;;
+      *" low "*) effort=low ;;
+      *) effort="${allowed%% *}" ;;
+    esac
+  fi
+  if (( ! candidate )); then
+    case " $allowed " in
+      *" $effort "*) ;;
+      *)
+        echo "Unsupported reasoning effort for probe: $effort (allowed: ${allowed// /, })" >&2
+        return 1
+        ;;
+    esac
+  fi
   if ! ai_litellm_health; then
     echo "LiteLLM proxy is not reachable at $(ai_litellm_base_url); reasoning probe will not auto-start it." >&2
     return 1
@@ -4311,17 +6356,18 @@ ai_litellm_model_reasoning_probe() {
   backend="$(ai_litellm_model_backend "$model" 2>/dev/null || printf '-')"
   payload="$(jq -nc --arg model "$model" --arg effort "$effort" '{
     model: $model,
-    messages: [{role: "user", content: "Reply with exactly OK."}],
-    max_tokens: 64,
-    temperature: 0,
-    reasoning_effort: $effort
+    messages: [{role: "user", content: "Think carefully, then reply with exactly OK."}],
+    max_tokens: 2048,
+    thinking: {type: "adaptive"},
+    output_config: {effort: $effort}
   }')"
   tmp="$(mktemp "${TMPDIR:-/tmp}/ai-litellm-reasoning-probe.XXXXXX")" || return 1
 
   http_code="$(
     ai_litellm_curl_auth "$master_key" --max-time 90 -sS -o "$tmp" -w "%{http_code}" \
       -H "Content-Type: application/json" \
-      "$(ai_litellm_api_base_url)/chat/completions" \
+      -H "anthropic-version: 2023-06-01" \
+      "$(ai_litellm_base_url)/v1/messages" \
       -d "$payload"
   )"
 
@@ -4329,17 +6375,17 @@ ai_litellm_model_reasoning_probe() {
     --arg model "$model" \
     --arg backend "$backend" \
     --arg effort "$effort" \
-    --arg path "proxy:chat.completions:reasoning_effort" \
+    --arg path "proxy:anthropic.messages:output_config.effort" \
     --arg http_code "$http_code" \
+    --arg candidate "$candidate" \
     --slurpfile response "$tmp" '
-      def message:
-        ($response[0].choices[0].message // {});
       def reasoning_tokens:
-        ($response[0].usage.completion_tokens_details.reasoning_tokens // 0);
+        ($response[0].usage.output_tokens_details.reasoning_tokens //
+         $response[0].usage.completion_tokens_details.reasoning_tokens // 0);
       def has_reasoning:
-        ((message.reasoning? // null) != null) or
-        ((message.reasoning_content? // null) != null) or
-        ((message.reasoning_details? // null) != null);
+        ([$response[0].content[]? | select(.type == "thinking" or .type == "reasoning")] | length) > 0 or
+        (($response[0].reasoning? // null) != null) or
+        (($response[0].reasoning_content? // null) != null);
       def ok: ($http_code | test("^2"));
       {
         timestamp: (now | todateiso8601),
@@ -4347,14 +6393,16 @@ ai_litellm_model_reasoning_probe() {
         provider_model: $backend,
         effort: $effort,
         path: $path,
-        http_code: $http_code
+        http_code: $http_code,
+        candidate: ($candidate == "1")
       }
       + if ok then
           {
-            status: (if (reasoning_tokens > 0 or has_reasoning) then "observed" else "not_observed" end),
+            status: (if (reasoning_tokens > 0 or has_reasoning) then "accepted_with_reasoning" else "accepted_without_reasoning_evidence" end),
             reasoning_tokens: reasoning_tokens,
             has_reasoning: has_reasoning,
-            response_id: ($response[0].id // null)
+            response_id: ($response[0].id // null),
+            interpretation: "request accepted; effort forwarding and behavioral impact remain unverified"
           }
         else
           {
@@ -4372,11 +6420,22 @@ ai_litellm_model_reasoning_probe() {
   rm -f "$tmp"
 
   ai_litellm_reasoning_observation_record "$observation_json" || return $?
-  print -r -- "$observation_json" | jq '{model_name, provider_model, effort, path, status, reasoning_tokens, has_reasoning, http_code, error}'
+  print -r -- "$observation_json" | jq '{model_name, provider_model, effort, candidate, path, status, reasoning_tokens, has_reasoning, http_code, interpretation, error}'
 
   local probe_status
   probe_status="$(print -r -- "$observation_json" | jq -r '.status')"
   [[ "$probe_status" != "error" ]]
+}
+
+ai_litellm_model_reasoning_probe() {
+  ai_litellm_lifecycle_lock_acquire || return $?
+  local rc=0
+  {
+    _ai_litellm_model_reasoning_probe_unlocked "$@" || rc=$?
+  } always {
+    ai_litellm_lifecycle_lock_release
+  }
+  return $rc
 }
 
 # Harness reasoning resolver preview. Each adapter translates its local model
@@ -4401,6 +6460,8 @@ def read_json(path)
 rescue
   {}
 end
+
+user_override = read_json(ARGV[3])
 
 def provider_model(registry, model)
   registry.dig(model, "litellm_params", "model") || "-"
@@ -4493,6 +6554,15 @@ descriptor_paths(harness_dir).each do |path|
   harness = descriptor["name"] || File.basename(path, ".json")
   next if !filter.empty? && harness != filter
   adapter = descriptor["adapter"]
+  if adapter == "claude-code"
+    user_effort = user_override.dig("harness", "reasoningEffort")
+    if user_effort
+      descriptor["adapterConfig"] ||= {}
+      descriptor["adapterConfig"]["reasoning"] ||= {}
+      descriptor["adapterConfig"]["reasoning"]["effort"] = user_effort
+      descriptor["adapterConfig"]["reasoning"]["confidence"] = "configured" unless user_effort == "auto"
+    end
+  end
 
   case adapter
   when "claude-code"
@@ -4520,7 +6590,7 @@ rows.each do |row|
     row[:provider_model], row[:provider_reasoning], row[:control],
     row[:effort].to_s, row[:source], row[:effective], row[:confidence])
 end
-' "$AI_LITELLM_CONFIG" "$AI_LITELLM_HARNESSES_DIR" "$filter"
+' "$AI_LITELLM_CONFIG" "$AI_LITELLM_HARNESSES_DIR" "$filter" "$AI_LITELLM_USER_CLAUDE_SETTINGS"
 }
 
 ai_litellm_harness_reasoning_update() {
@@ -4543,12 +6613,34 @@ ai_litellm_harness_reasoning_update() {
     return 1
   }
 
+  if [[ "$harness" != "claude" ]]; then
+    echo "Only the Claude harness has a durable reasoning overlay." >&2
+    return 1
+  fi
+  if [[ "$mode" == "allowed" ]]; then
+    printf '["auto","low","medium","high","xhigh","max"]\n'
+    return 0
+  fi
+  local owns_lock=0 lock_path="$AI_LITELLM_USER_CONFIG_HOME/.mutation.lock"
+  if [[ ! -d "$lock_path" || "$(<"$lock_path/pid" 2>/dev/null || true)" != "$$" ]]; then
+    ai_litellm_user_mutation_lock_acquire || return 1
+    owns_lock=1
+  fi
+  local backup existed=0 rc=0
+  backup="$(mktemp "${TMPDIR:-/tmp}/claude-litellm-harness-reasoning.json.XXXXXX")" || {
+    (( owns_lock )) && ai_litellm_user_mutation_lock_release
+    return 1
+  }
+  if [[ -f "$AI_LITELLM_USER_CLAUDE_SETTINGS" ]]; then
+    cp -p "$AI_LITELLM_USER_CLAUDE_SETTINGS" "$backup"
+    existed=1
+  fi
+
   node -e '
 const fs = require("fs");
-const [file, mode, rawEffort = ""] = process.argv.slice(1);
-const descriptor = JSON.parse(fs.readFileSync(file, "utf8"));
+const [descriptorFile, overrideFile, mode, rawEffort = ""] = process.argv.slice(1);
+const descriptor = JSON.parse(fs.readFileSync(descriptorFile, "utf8"));
 const adapter = descriptor.adapter;
-const adapterConfig = descriptor.adapterConfig ||= {};
 const effort = String(rawEffort).toLowerCase();
 
 const fail = (message) => {
@@ -4560,73 +6652,67 @@ const assertAllowed = (allowed) => {
     fail(`Unsupported reasoning effort for ${adapter}: ${effort} (allowed: ${allowed.join(", ")})`);
   }
 };
-const setReasoning = (value) => {
-  adapterConfig.reasoning = value;
-};
-
-const noHarnessControl = (notes) => ({
-  control: "none",
-  source: "none",
-  wire: "provider-default",
-  confidence: "unknown",
-  ...(notes ? {notes} : {})
-});
 const adapterReasoning = {
   "claude-code": {
     allowed: ["auto", "low", "medium", "high", "xhigh", "max"],
-    unsetEffort: "auto",
-    build(value) {
-      if (value === "auto") {
-        return {
-          control: "intent",
-          source: "claude-code-effort",
-          effort: "auto",
-          wire: "tier/model+optional-cli-flag:--effort",
-          confidence: "inferred",
-          notes: "Claude Code tier selection can affect effort defaults; explicit efforts are passed with --effort."
-        };
-      }
-      return {
-        control: "intent",
-        source: "claude-code-effort",
-        effort: value,
-        wire: "cli-flag:--effort",
-        flag: "--effort",
-        confidence: "configured",
-        notes: "User-provided --effort at launch overrides this descriptor default."
-      };
-    }
+    unsetEffort: "auto"
   }
 };
 
 if (!adapterReasoning[adapter]) fail(`Unsupported harness adapter for reasoning mutation: ${adapter}`);
 if (mode === "allowed") { process.stdout.write(JSON.stringify(adapterReasoning[adapter].allowed)); process.exit(0); }
+let payload = {schemaVersion: 1, settings: {}};
+if (fs.existsSync(overrideFile)) {
+  const stat = fs.lstatSync(overrideFile);
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) {
+    fail(`Unsafe Claude user override: ${overrideFile}`);
+  }
+  payload = JSON.parse(fs.readFileSync(overrideFile, "utf8"));
+}
+if (payload.schemaVersion !== 1) fail("unsupported Claude user override schemaVersion");
+payload.harness ||= {};
 if (mode === "set") {
   assertAllowed(adapterReasoning[adapter].allowed);
-  setReasoning(adapterReasoning[adapter].build(effort));
+  payload.harness.reasoningEffort = effort;
 } else if (mode === "unset") {
-  setReasoning(adapterReasoning[adapter].build(adapterReasoning[adapter].unsetEffort));
+  payload.harness.reasoningEffort = adapterReasoning[adapter].unsetEffort;
 } else {
   fail(`Unsupported reasoning update mode: ${mode}`);
 }
 
-const tmp = `${file}.tmp.${process.pid}`;
-const modeBits = fs.statSync(file).mode & 0o777;
+const tmp = `${overrideFile}.tmp.${process.pid}`;
 try {
-  fs.writeFileSync(tmp, JSON.stringify(descriptor, null, 2) + "\n", {mode: modeBits});
-  fs.renameSync(tmp, file);
+  const fd = fs.openSync(tmp, "wx", 0o600);
+  try {
+    fs.writeFileSync(fd, JSON.stringify(payload, null, 2) + "\n");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmp, overrideFile);
 } catch (error) {
   try { fs.unlinkSync(tmp); } catch (_) {}
   throw error;
 }
-' "$descriptor" "$mode" "$effort" || return $?
+' "$descriptor" "$AI_LITELLM_USER_CLAUDE_SETTINGS" "$mode" "$effort" || rc=$?
+
+  if (( rc == 0 )); then
+    ai_litellm_render_user_config >/dev/null || rc=$?
+  fi
+  if (( rc != 0 )); then
+    (( existed )) && cp -p "$backup" "$AI_LITELLM_USER_CLAUDE_SETTINGS" || rm -f "$AI_LITELLM_USER_CLAUDE_SETTINGS"
+    ai_litellm_render_user_config >/dev/null 2>&1 || true
+  fi
+  rm -f "$backup"
+  (( owns_lock )) && ai_litellm_user_mutation_lock_release
+  (( rc == 0 )) || return $rc
 
   if [[ "$mode" == "set" ]]; then
     echo "Updated harness reasoning default: $harness -> $effort"
   elif [[ "$mode" == "unset" ]]; then
     echo "Reset harness reasoning default: $harness"
   fi
-  [[ "$mode" == "allowed" ]] || echo "Run 'claude-litellm sync' to regenerate derived configs where needed."
+  [[ "$mode" == "allowed" ]] || echo "The durable user overlay will survive sync and reinstall."
 }
 
 ai_litellm_harness_reasoning_set() {
@@ -5130,7 +7216,24 @@ ai_litellm_context_probe_runtime_surface() {
 
 ai_litellm_context_observation_record() {
   local observation_json="$1"
+  local safe_dir
+  for safe_dir in "$AI_LITELLM_STATE_HOME" "$AI_LITELLM_PROXY_HOME"; do
+    if [[ -e "$safe_dir" || -L "$safe_dir" ]]; then
+      [[ -d "$safe_dir" && ! -L "$safe_dir" ]] || {
+        echo "Refusing unsafe context evidence directory: $safe_dir" >&2
+        return 1
+      }
+    fi
+  done
   mkdir -p "$AI_LITELLM_PROXY_HOME"
+  chmod 700 "$AI_LITELLM_STATE_HOME" "$AI_LITELLM_PROXY_HOME" 2>/dev/null || true
+  if [[ -e "$AI_LITELLM_CONTEXT_OBS_FILE" || -L "$AI_LITELLM_CONTEXT_OBS_FILE" ]]; then
+    [[ -f "$AI_LITELLM_CONTEXT_OBS_FILE" && ! -L "$AI_LITELLM_CONTEXT_OBS_FILE" && \
+       "$(stat -f %Lp "$AI_LITELLM_CONTEXT_OBS_FILE" 2>/dev/null)" == "600" ]] || {
+      echo "Refusing unsafe context evidence file: $AI_LITELLM_CONTEXT_OBS_FILE" >&2
+      return 1
+    }
+  fi
   node -e '
 const fs = require("fs");
 const [file, raw] = process.argv.slice(1);
@@ -5138,7 +7241,9 @@ const observation = JSON.parse(raw);
 let state = {schemaVersion: 1, observations: []};
 try {
   state = JSON.parse(fs.readFileSync(file, "utf8"));
-} catch (_) {}
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
 if (!state || typeof state !== "object" || Array.isArray(state)) state = {schemaVersion: 1, observations: []};
 if (!Array.isArray(state.observations)) state.observations = [];
 if (!observation.id) {
@@ -5157,7 +7262,7 @@ state.observations.push(observation);
 state.observations.sort((a, b) => String(a.id).localeCompare(String(b.id)));
 const tmp = `${file}.tmp.${process.pid}`;
 try {
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", {mode: 0o600});
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", {mode: 0o600, flag: "wx"});
   fs.renameSync(tmp, file);
 } catch (error) {
   try { fs.unlinkSync(tmp); } catch (_) {}
@@ -5166,7 +7271,7 @@ try {
 ' "$AI_LITELLM_CONTEXT_OBS_FILE" "$observation_json"
 }
 
-ai_litellm_context_probe_record() {
+_ai_litellm_context_probe_record_unlocked() {
   local surface="${1:-}" selection="${2:-}" model="${3:-}" tokens="${4:-}"
   shift $(( $# < 4 ? $# : 4 ))
   if [[ -z "$surface" || -z "$selection" || -z "$model" || -z "$tokens" ]]; then
@@ -5178,10 +7283,10 @@ ai_litellm_context_probe_record() {
   provider_model="$(ai_litellm_model_backend "$model" 2>/dev/null || true)"
   while (( $# )); do
     case "$1" in
-      --provider-model) provider_model="${2:-}"; shift 2 ;;
-      --status) obs_status="${2:-}"; shift 2 ;;
-      --cost-usd) cost_usd="${2:-}"; shift 2 ;;
-      --notes) notes="${2:-}"; shift 2 ;;
+      --provider-model) (( $# >= 2 )) || { echo "--provider-model requires a value" >&2; return 1; }; provider_model="$2"; shift 2 ;;
+      --status) (( $# >= 2 )) || { echo "--status requires a value" >&2; return 1; }; obs_status="$2"; shift 2 ;;
+      --cost-usd) (( $# >= 2 )) || { echo "--cost-usd requires a value" >&2; return 1; }; cost_usd="$2"; shift 2 ;;
+      --notes) (( $# >= 2 )) || { echo "--notes requires a value" >&2; return 1; }; notes="$2"; shift 2 ;;
       *) echo "Unknown context observation option: $1" >&2; return 1 ;;
     esac
   done
@@ -5190,6 +7295,10 @@ ai_litellm_context_probe_record() {
     echo "observed_input_tokens must be a positive integer" >&2
     return 1
   }
+  case "$obs_status" in
+    lower_bound|upper_bound|observed) ;;
+    *) echo "status must be lower_bound, upper_bound, or observed" >&2; return 1 ;;
+  esac
 
   local observation_json
   observation_json="$(jq -nc \
@@ -5217,6 +7326,17 @@ ai_litellm_context_probe_record() {
 
   ai_litellm_context_observation_record "$observation_json" || return $?
   print -r -- "$observation_json" | jq '{surface, selection, model_name, provider_model, status, observed_input_tokens, cost_usd, evidence}'
+}
+
+ai_litellm_context_probe_record() {
+  ai_litellm_lifecycle_lock_acquire || return $?
+  local rc=0
+  {
+    _ai_litellm_context_probe_record_unlocked "$@" || rc=$?
+  } always {
+    ai_litellm_lifecycle_lock_release
+  }
+  return $rc
 }
 
 ai_litellm_context_observations() {
@@ -5479,6 +7599,9 @@ text = File.read(ARGV[0])
 # runtimes.<rt> defaults/overrides; the anchor policy applies to
 # hand-maintained entries only.
 text = text.gsub(/^# BEGIN claude-litellm discovered local routes\n.*?^# END claude-litellm discovered local routes\n/m, "")
+# User overlay entries are generated from validated JSON and intentionally use
+# inline model_info so they remain self-contained across package upgrades.
+text = text.gsub(/^# BEGIN claude-litellm user models\n.*?^# END claude-litellm user models\n/m, "")
 entries = text.split(/\n(?=  - model_name:\s*)/)
 errors = []
 entries.each do |entry|
@@ -5853,17 +7976,19 @@ ai_litellm_cmd_model() {
       ;;
     refresh-capabilities) ai_litellm_model_refresh_capabilities "$@" ;;
     add)                  ai_litellm_model_add "$@" ;;
+    register)             ai_litellm_model_register "$@" ;;
     remove)               ai_litellm_model_remove "$@" ;;
+    qualify)              ai_litellm_model_qualify "$@" ;;
     reasoning)
       case "${1:-}" in
         probe)   shift; ai_litellm_model_reasoning_probe "$@" ;;
         set)     shift; ai_litellm_model_reasoning_set "$@" ;;
         unset)   shift; ai_litellm_model_reasoning_unset "$@" ;;
         allowed) shift; ai_litellm_model_reasoning_allowed_json "${1:-}" ;;
-        *)       echo "Usage: claude-litellm model reasoning probe <model> [effort]|set <model> <effort>|unset <model>|allowed <model>" >&2; return 1 ;;
+        *)       echo "Usage: claude-litellm model reasoning probe <model> [effort] [--candidate]|set <model> <effort>|unset <model>|allowed <model>" >&2; return 1 ;;
       esac
       ;;
-    *) echo "Usage: claude-litellm model list|info [model]|limits [model]|probe [model...]|refresh-capabilities [--apply|--json|--check]|add <provider-id> [--name|--claude-tier|--dry-run]|remove <surface> [--dry-run]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|reasoning allowed <model>" >&2; return 1 ;;
+    *) echo "Usage: claude-litellm model list|info [model]|limits [model]|probe [model...]|refresh-capabilities [--json|--check]|add <provider-id> [--name|--claude-tier|--dry-run]|register <surface> --backend <provider/model> --context N --output N [options]|remove <surface> [--dry-run]|qualify <surface> [--activate-tier <tier>|--json]|reasoning probe <model> [effort] [--candidate]|reasoning set <model> <effort>|reasoning unset <model>|reasoning allowed <model>" >&2; return 1 ;;
   esac
 }
 
@@ -6036,8 +8161,10 @@ Usage: claude-litellm <group> <verb> [args]
   Runtime:       claude-litellm runtime list|status [name]
   Model:         claude-litellm model list|info [model]|limits [model]|probe [model...]|refresh-capabilities [opts]
                  claude-litellm model add <provider-id> [--name|--claude-tier|--dry-run]
+                 claude-litellm model register <surface> --backend <provider/model> --context N --output N [options]
                  claude-litellm model remove <surface> [--dry-run]
-                 claude-litellm model reasoning probe <model> [effort]
+                 claude-litellm model qualify <surface> [--activate-tier <tier>|--json]
+                 claude-litellm model reasoning probe <model> [effort] [--candidate]
                  claude-litellm model reasoning set <model> <effort>
                  claude-litellm model reasoning unset <model>
   Context:       claude-litellm context matrix [filter]|probe <surface|all>|observations [filter]
@@ -6048,7 +8175,8 @@ Usage: claude-litellm <group> <verb> [args]
   Uninstall:     claude-litellm uninstall Remove package directory and global shim
 
 Reasoning effort values (not a command — pass to reasoning/harness set):
-  OpenRouter none|minimal|low|medium|high|xhigh   Claude auto|low|medium|high|xhigh|max
+  OpenRouter none|minimal|low|medium|high         Claude auto|low|medium|high|xhigh|max
+  LiteLLM 1.92 normalizes unqualified OpenRouter xhigh/max to high; the CLI rejects those false choices.
 EOF
 }
 

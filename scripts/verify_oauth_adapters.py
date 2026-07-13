@@ -26,6 +26,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import yaml
 
@@ -212,6 +213,123 @@ def main() -> int:
         else:
             os.environ["NUM_WORKERS"] = old_workers
 
+    # Regression for BerriAI/litellm#25429: ChatGPT can stream a valid
+    # response.output_item.done and then end with response.completed.output=[].
+    # The exact-version compatibility hook must recover the transformed item
+    # before LiteLLM stores the completed response. This is a fully offline SSE
+    # event simulation; no OAuth or inference endpoint is contacted.
+    assert bootstrap.CHATGPT_STREAM_PATCH_REQUIRED is True
+    assert bootstrap.CHATGPT_STREAM_PATCH_ACTIVE is True
+    import httpx
+    from litellm.llms.openai.responses.transformation import OpenAIResponsesAPIConfig
+    from litellm.responses import streaming_iterator as streaming_iterator_module
+
+    stream_log = MagicMock()
+    stream_log.model_call_details = {"litellm_params": {}}
+    stream_log.start_time = None
+    with patch.object(streaming_iterator_module, "get_api_base", return_value=None):
+        stream_iterator = streaming_iterator_module.BaseResponsesAPIStreamingIterator(
+            response=httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text="",
+            ),
+            model="chatgpt/gpt-5.4",
+            responses_api_provider_config=OpenAIResponsesAPIConfig(),
+            logging_obj=stream_log,
+            custom_llm_provider="chatgpt",
+            request_data={},
+        )
+    streamed_item = {
+        "type": "message",
+        "id": "msg_offline_regression",
+        "role": "assistant",
+        "content": [
+            {"type": "output_text", "text": "OK", "annotations": []},
+        ],
+        "status": "completed",
+    }
+    completed_response = {
+        "id": "resp_offline_regression",
+        "object": "response",
+        "created_at": 1_700_000_000,
+        "status": "completed",
+        "model": "gpt-5.4",
+        "output": [],
+    }
+    with patch.object(stream_iterator, "_handle_logging_completed_response"):
+        stream_iterator._process_chunk(json.dumps({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": streamed_item,
+        }))
+        stream_iterator._process_chunk(json.dumps({
+            "type": "response.completed",
+            "response": completed_response,
+        }))
+    recovered_output = stream_iterator.completed_response.response.output
+    assert len(recovered_output) == 1, "ChatGPT completed output was not recovered"
+    recovered_item = recovered_output[0]
+    recovered_content = (
+        recovered_item.get("content")
+        if isinstance(recovered_item, dict)
+        else recovered_item.content
+    )
+    recovered_part = recovered_content[0]
+    recovered_text = (
+        recovered_part.get("text")
+        if isinstance(recovered_part, dict)
+        else recovered_part.text
+    )
+    assert recovered_text == "OK"
+    from litellm.completion_extras.litellm_responses_transformation.transformation import (
+        LiteLLMResponsesTransformationHandler,
+    )
+
+    bridge = LiteLLMResponsesTransformationHandler()
+    recovered_choices = bridge._convert_response_output_to_choices(
+        output_items=recovered_output,
+        handle_raw_dict_callback=bridge._handle_raw_dict_response_item,
+    )
+    assert len(recovered_choices) == 1
+    assert recovered_choices[0].message.content == "OK", (
+        "the completion bridge could not consume the recovered ChatGPT output"
+    )
+
+    # Claude Code depends on tool calls, not only text. Reuse the offline
+    # iterator for a second response so response.created also proves that the
+    # per-stream recovery state is reset before collecting the next item.
+    function_item = {
+        "type": "function_call",
+        "id": "fc_offline_regression",
+        "call_id": "call_offline_regression",
+        "name": "get_weather",
+        "arguments": '{"city":"Seoul"}',
+        "status": "completed",
+    }
+    with patch.object(stream_iterator, "_handle_logging_completed_response"):
+        stream_iterator._process_chunk(json.dumps({
+            "type": "response.created",
+            "response": {**completed_response, "status": "in_progress"},
+        }))
+        stream_iterator._process_chunk(json.dumps({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": function_item,
+        }))
+        stream_iterator._process_chunk(json.dumps({
+            "type": "response.completed",
+            "response": completed_response,
+        }))
+    recovered_tool_choices = bridge._convert_response_output_to_choices(
+        output_items=stream_iterator.completed_response.response.output,
+        handle_raw_dict_callback=bridge._handle_raw_dict_response_item,
+    )
+    assert len(recovered_tool_choices) == 1
+    recovered_tool = recovered_tool_choices[0].message.tool_calls[0]
+    assert recovered_tool.function.name == "get_weather"
+    assert json.loads(recovered_tool.function.arguments) == {"city": "Seoul"}
+
     payload = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
 
@@ -249,16 +367,23 @@ def main() -> int:
     id_sentinel = "ID_TOKEN_MUST_NEVER_BE_PRINTED_f2e8aa"
     with tempfile.TemporaryDirectory(prefix="claude-litellm-oauth-") as raw_tmp:
         tmp = Path(raw_tmp)
-        chatgpt_dir = tmp / "state" / "auth" / "chatgpt"
-        grok_dir = tmp / "state" / "auth" / "grok"
+        state_root = tmp / "state"
+        state_root.mkdir(mode=0o700)
+        auth_root = state_root / "auth"
+        chatgpt_dir = auth_root / "chatgpt"
+        grok_dir = auth_root / "grok"
         env = os.environ.copy()
         env.update(
+            AI_LITELLM_HOME=str(tmp),
+            AI_LITELLM_STATE_HOME=str(state_root),
+            CLAUDE_LITELLM_AUTH_HOME=str(auth_root),
             CHATGPT_TOKEN_DIR=str(chatgpt_dir),
             CHATGPT_AUTH_FILE="auth.json",
             XAI_OAUTH_TOKEN_DIR=str(grok_dir),
             XAI_OAUTH_AUTH_FILE="auth.json",
         )
         os.environ.update({key: env[key] for key in (
+            "AI_LITELLM_HOME", "AI_LITELLM_STATE_HOME", "CLAUDE_LITELLM_AUTH_HOME",
             "CHATGPT_TOKEN_DIR", "CHATGPT_AUTH_FILE",
             "XAI_OAUTH_TOKEN_DIR", "XAI_OAUTH_AUTH_FILE",
         )})
@@ -274,13 +399,14 @@ def main() -> int:
             "chatgpt": chatgpt_dir / "auth.json",
             "grok": grok_dir / "auth.json",
         }
+        auth_payload = {
+            "access_token": access_sentinel,
+            "refresh_token": refresh_sentinel,
+            "expires_at": int(time.time()) + 3600,
+        }
         for provider, path in records.items():
             manager._secure_parent(path)
-            path.write_text(json.dumps({
-                "access_token": access_sentinel,
-                "refresh_token": refresh_sentinel,
-                "expires_at": int(time.time()) + 3600,
-            }), encoding="utf-8")
+            path.write_text(json.dumps(auth_payload), encoding="utf-8")
             # Simulate an older/insecure auth file and require the manager to
             # repair it before status can report the credential as safe.
             path.chmod(0o644)
@@ -310,6 +436,73 @@ def main() -> int:
         # the original exception nor token sentinels may leak to stderr.
         guard = _load_oauth_guard()
         assert guard.PATCH_ACTIVE is True
+
+        # Credential contents must be read from the descriptor that passed
+        # O_NOFOLLOW/fstat, never by reopening the pathname after lstat.
+        original_read_text = Path.read_text
+
+        def forbid_managed_path_read(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self in records.values():
+                raise AssertionError(f"OAuth credential was reopened by path: {self}")
+            return original_read_text(self, *args, **kwargs)
+
+        with patch.object(Path, "read_text", new=forbid_managed_path_read):
+            for provider, path in records.items():
+                assert manager._read_auth_record(path)["access_token"] == access_sentinel
+                assert guard._read_auth_file_private(path, provider)["access_token"] == access_sentinel
+
+        # Staged files are fchmodded before replace. A post-rename chmod(path)
+        # would reintroduce a symlink-swap race and is forbidden here.
+        original_chmod = os.chmod
+        managed_record_paths = set(records.values())
+
+        def forbid_managed_path_chmod(target: Any, mode: int, *args: Any, **kwargs: Any) -> None:
+            if not isinstance(target, int) and Path(target) in managed_record_paths:
+                raise AssertionError(f"OAuth credential was chmodded by path: {target}")
+            original_chmod(target, mode, *args, **kwargs)
+
+        with patch("os.chmod", new=forbid_managed_path_chmod):
+            manager._atomic_write_auth(records["chatgpt"], auth_payload)
+            guard._write_auth_file_atomic(records["grok"], "grok", auth_payload)
+        for path in records.values():
+            assert _mode(path) == 0o600
+            assert json.loads(path.read_text(encoding="utf-8")) == auth_payload
+
+        # Both readers reject a symlink leaf without reading or changing its
+        # target. Restore the managed record through the same atomic writer.
+        symlink_record = records["chatgpt"]
+        outside_record = tmp / "outside-auth.json"
+        outside_record.write_text(json.dumps({"access_token": "outside"}), encoding="utf-8")
+        outside_record.chmod(0o600)
+        symlink_record.unlink()
+        symlink_record.symlink_to(outside_record)
+        try:
+            manager._read_auth_record(symlink_record)
+            raise AssertionError("OAuth manager followed a credential symlink")
+        except RuntimeError:
+            pass
+        try:
+            guard._read_auth_file_private(symlink_record, "chatgpt")
+            raise AssertionError("OAuth proxy guard followed a credential symlink")
+        except OSError:
+            pass
+        assert json.loads(outside_record.read_text(encoding="utf-8")) == {"access_token": "outside"}
+        symlink_record.unlink()
+        manager._atomic_write_auth(symlink_record, auth_payload)
+
+        # Read-only/status paths require the exact private mode; repair is an
+        # explicit manager operation on the already-open fd.
+        strict_mode_record = records["grok"]
+        strict_mode_record.chmod(0o400)
+        assert manager._read_metadata("grok")["permissionsSafe"] is False
+        try:
+            guard._read_auth_file_private(strict_mode_record, "grok")
+            raise AssertionError("OAuth proxy guard accepted a non-0600 credential")
+        except OSError:
+            pass
+        manager._secure_auth_file(strict_mode_record)
+        assert _mode(strict_mode_record) == 0o600
+
         from litellm.llms.chatgpt.authenticator import Authenticator
         from litellm.llms.chatgpt.common_utils import GetAccessTokenError, RefreshAccessTokenError
 
@@ -483,6 +676,131 @@ def main() -> int:
         assert refresh_sentinel not in safe_error
         assert id_sentinel not in safe_error
 
+        # Storage is a single managed layout, not four independently trusted
+        # environment paths. Reject a symlink at either ancestor before mkdir,
+        # a provider directory outside the auth root, and filename traversal.
+        managed_env_keys = (
+            "AI_LITELLM_HOME",
+            "AI_LITELLM_STATE_HOME",
+            "CLAUDE_LITELLM_AUTH_HOME",
+            "CHATGPT_TOKEN_DIR",
+            "CHATGPT_AUTH_FILE",
+            "XAI_OAUTH_TOKEN_DIR",
+            "XAI_OAUTH_AUTH_FILE",
+        )
+
+        def storage_env(storage_home: Path) -> dict[str, str]:
+            storage_state = storage_home / "state"
+            storage_auth = storage_state / "auth"
+            candidate = env.copy()
+            candidate.update(
+                AI_LITELLM_HOME=str(storage_home),
+                AI_LITELLM_STATE_HOME=str(storage_state),
+                CLAUDE_LITELLM_AUTH_HOME=str(storage_auth),
+                CHATGPT_TOKEN_DIR=str(storage_auth / "chatgpt"),
+                CHATGPT_AUTH_FILE="auth.json",
+                XAI_OAUTH_TOKEN_DIR=str(storage_auth / "grok"),
+                XAI_OAUTH_AUTH_FILE="auth.json",
+            )
+            return candidate
+
+        def assert_manager_rejects(candidate: dict[str, str]) -> None:
+            rejected = subprocess.run(
+                [sys.executable, str(OAUTH_MANAGER), "--prepare-storage"],
+                env=candidate,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert rejected.returncode != 0, "OAuth manager accepted an unsafe storage path"
+            assert access_sentinel not in rejected.stdout + rejected.stderr
+            assert refresh_sentinel not in rejected.stdout + rejected.stderr
+
+        outside_package = tmp / "outside-package-target"
+        outside_package.mkdir(mode=0o700)
+        (outside_package / "state").mkdir(mode=0o700)
+        linked_package = tmp / "linked-package"
+        linked_package.symlink_to(outside_package, target_is_directory=True)
+        linked_package_env = storage_env(linked_package)
+        assert_manager_rejects(linked_package_env)
+        assert not (outside_package / "state" / "auth").exists(), (
+            "manager followed a symlinked package ancestor before validation"
+        )
+
+        real_package = tmp / "real-package"
+        real_package.mkdir(mode=0o700)
+        real_state = real_package / "state"
+        real_state.mkdir(mode=0o700)
+        outside_auth = tmp / "outside-auth-target"
+        outside_auth.mkdir(mode=0o700)
+        (real_state / "auth").symlink_to(outside_auth, target_is_directory=True)
+        assert_manager_rejects(storage_env(real_package))
+        assert not (outside_auth / "chatgpt").exists(), (
+            "manager followed a symlinked auth ancestor before validation"
+        )
+
+        mismatched_package = tmp / "mismatched-package"
+        mismatched_package.mkdir(mode=0o700)
+        detached_state = tmp / "detached-state"
+        detached_state.mkdir(mode=0o700)
+        mismatch_env = storage_env(mismatched_package)
+        mismatch_env["AI_LITELLM_STATE_HOME"] = str(detached_state)
+        mismatch_env["CLAUDE_LITELLM_AUTH_HOME"] = str(detached_state / "auth")
+        mismatch_env["CHATGPT_TOKEN_DIR"] = str(detached_state / "auth" / "chatgpt")
+        mismatch_env["XAI_OAUTH_TOKEN_DIR"] = str(detached_state / "auth" / "grok")
+        assert_manager_rejects(mismatch_env)
+        assert not (detached_state / "auth").exists(), (
+            "manager accepted a state root outside the package root"
+        )
+
+        provider_package = tmp / "provider-package"
+        provider_package.mkdir(mode=0o700)
+        (provider_package / "state").mkdir(mode=0o700)
+        mismatch_env = storage_env(provider_package)
+        mismatch_target = tmp / "mismatched-provider-root"
+        mismatch_env["CHATGPT_TOKEN_DIR"] = str(mismatch_target)
+        assert_manager_rejects(mismatch_env)
+        assert not mismatch_target.exists(), "manager created an out-of-root provider directory"
+
+        filename_package = tmp / "filename-package"
+        filename_package.mkdir(mode=0o700)
+        (filename_package / "state").mkdir(mode=0o700)
+        filename_env = storage_env(filename_package)
+        escaped_credential = tmp / "escaped-auth.json"
+        filename_env["CHATGPT_AUTH_FILE"] = "../../../escaped-auth.json"
+        assert_manager_rejects(filename_env)
+        assert not escaped_credential.exists(), "manager accepted credential filename traversal"
+
+        # The proxy monkeypatch must guard constructor-time mkdir as well as
+        # refresh-time writes. Both operations previously followed the same
+        # symlinked state ancestor before the immediate parent was checked.
+        old_storage_env = {key: os.environ.get(key) for key in managed_env_keys}
+        os.environ.update({key: linked_package_env[key] for key in managed_env_keys})
+        try:
+            try:
+                Authenticator()
+            except OSError:
+                pass
+            else:
+                raise AssertionError("ChatGPT guard accepted a symlinked state root")
+
+            guarded_xai = XAIOAuthAuthenticator()
+            try:
+                guarded_xai._write_auth_file({"access_token": access_sentinel})
+            except OSError:
+                pass
+            else:
+                raise AssertionError("xAI guard accepted a symlinked state root")
+        finally:
+            for key, value in old_storage_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        assert not (outside_package / "state" / "auth").exists(), (
+            "proxy OAuth guard followed a symlinked package ancestor"
+        )
+
         # The production bootstrap must preserve the authenticated ChatGPT
         # deployment and enumerate OAuth/local routes without an OpenRouter
         # credential. This proves startup does not make an unrelated cloud key
@@ -509,14 +827,28 @@ def main() -> int:
         # boots only through proxy_bootstrap. Its explicit pre-auth policy is to
         # omit the unavailable ChatGPT deployment while keeping every unrelated
         # route available; users add it on the next restart after `auth login`.
-        unauthenticated_chatgpt_dir = tmp / "state" / "auth" / "chatgpt-empty"
-        unauthenticated_chatgpt_dir.mkdir(mode=0o700, parents=True)
+        unauthenticated_chatgpt_dir = chatgpt_dir
+        authenticated_record = records["chatgpt"]
+        saved_authenticated_record = tmp / "saved-chatgpt-auth.json"
+        os.replace(authenticated_record, saved_authenticated_record)
         unauthenticated_env = proxy_env.copy()
-        unauthenticated_env["CHATGPT_TOKEN_DIR"] = str(unauthenticated_chatgpt_dir)
-        unauthenticated_payload, unauthenticated_log = _run_bootstrap(
-            unauthenticated_env,
-            tmp / "proxy-empty-chatgpt-startup.log",
-        )
+        device_flow_artifact: Path | None = None
+        try:
+            unauthenticated_payload, unauthenticated_log = _run_bootstrap(
+                unauthenticated_env,
+                tmp / "proxy-empty-chatgpt-startup.log",
+            )
+            for artifact in unauthenticated_chatgpt_dir.rglob("*"):
+                if not artifact.is_file():
+                    continue
+                if (
+                    artifact.name == "device_code_requested_at"
+                    or b"device_code_requested_at" in artifact.read_bytes()
+                ):
+                    device_flow_artifact = artifact
+                    break
+        finally:
+            os.replace(saved_authenticated_record, authenticated_record)
         unauthenticated_ids = {
             row.get("id") for row in unauthenticated_payload.get("data", [])
         }
@@ -544,13 +876,9 @@ def main() -> int:
         assert not any(marker in unauthenticated_log for marker in interactive_markers), (
             "bootstrap startup entered the interactive ChatGPT device flow"
         )
-        for artifact in unauthenticated_chatgpt_dir.rglob("*"):
-            if not artifact.is_file():
-                continue
-            assert artifact.name != "device_code_requested_at"
-            assert b"device_code_requested_at" not in artifact.read_bytes(), (
-                f"bootstrap startup wrote a device-flow cooldown marker to {artifact}"
-            )
+        assert device_flow_artifact is None, (
+            f"bootstrap startup wrote a device-flow cooldown marker to {device_flow_artifact}"
+        )
 
     print(
         "OK: LiteLLM 1.92.0 OAuth routes, guard, redaction, and non-interactive bootstrap are valid."

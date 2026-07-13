@@ -4,18 +4,50 @@
 
 OpenRouter routes use `OPENROUTER_API_KEY`, resolved at proxy startup from the
 package env file or macOS Keychain. An inherited shell value is accepted but
-discouraged. Additional LiteLLM providers can be added to
-`config/litellm_config.yaml`; never commit credentials.
+discouraged. `claude-litellm model add <openrouter-id>` reads the live catalog
+and writes a durable user route.
 
-When editing an installed registry through `claude-litellm model ...` or
-`sync`, carry the intended change into the source checkout before reinstalling.
-The installer detects registry drift and refuses the upgrade rather than
-silently replacing custom routes.
+Simple API-key providers and compatible APIs use `model register`. Supply a
+LiteLLM backend identifier, explicit limits, an optional HTTPS/loopback base
+URL, and a required environment-variable *name* (or explicit `none` for a
+no-auth local endpoint). Literal credentials and gateway-reserved variables
+such as `LITELLM_MASTER_KEY` are rejected. Every referenced provider variable
+is dynamically scrubbed from Claude Code and tools it launches.
+Package defaults stay in the install prefix; user routes stay in
+`~/.config/claude-litellm/models.json` and survive reinstall.
+The Keychain writer accepts printable ASCII provider tokens and keeps their
+bytes out of process arguments. Non-ASCII/binary credentials must use the
+private env-file storage mode.
+
+This command supports single-API-key or no-auth backends expressible with its
+documented fields; it is not an arbitrary LiteLLM configuration passthrough.
+Azure, Bedrock, Vertex, OCI, and other complex auth need a reviewed source
+change. ChatGPT/xAI OAuth routes are package-defined because their adapters
+require omitted keys or dedicated flags. `--api-key-env none` means no
+authentication and does not select OAuth.
+
+`model refresh-capabilities --check` audits both packaged and user-added
+OpenRouter routes. If a user route drifts, move any Claude alias away, remove
+and re-add it from the current catalog, qualify it again, then reactivate it.
 
 ## oMLX and local OpenAI-compatible servers
 
 Local routes use `openai/<model>` with a loopback `api_base`. They remain behind
 the same Anthropic-to-OpenAI translation and tool-fidelity tests as cloud routes.
+
+oMLX discovery is automatic on `sync`. The validated last-known-good discovery
+block is retained when oMLX is temporarily unavailable; a successful discovery
+atomically replaces it. Qwen3.5 and Qwen3.6 models must receive
+`litellm_params.extra_body.chat_template_kwargs.enable_thinking=false`. LiteLLM
+merges that `extra_body` value into the final OpenAI-compatible request, so oMLX
+receives top-level `chat_template_kwargs`. With default thinking, tested Qwen3.5
+models emitted textual `<tool_call>` markup; Qwen3.6-27B returned repetitive
+reasoning text and no forced tool call. Thinking-off produced native structured
+tool calls. Nesting `chat_template_kwargs` one level deeper in the final request
+does not disable the template and is not equivalent.
+Exactly one runtime may enable `discoverModels`; multiple non-discovering
+runtimes are allowed, but two discovery owners are rejected rather than merged
+ambiguously.
 
 ## ChatGPT OAuth
 
@@ -39,6 +71,10 @@ provider request. Its generic GPT translation mock is not proof of the
 `chatgpt/*` provider-specific wire. A live prompt plus tool call is required
 after the user authorizes the account.
 
+LiteLLM 1.92.0 also drops streamed output items when ChatGPT closes with an
+empty `response.completed.output`. The package carries a version-gated recovery
+shim for this known upstream defect and an offline text/tool regression test.
+
 ## Grok OAuth
 
 The `Grok-4.5-xai-oauth` route uses LiteLLM's `xai/*` provider with
@@ -60,8 +96,9 @@ a conservative 32K owned-policy output ceiling instead of claiming 500K output.
 ## Effort
 
 Claude's effort flag is intent, not proof that a provider supports discrete
-reasoning levels. Only levels confirmed by provider metadata and a wire test
-should be advertised. Missing or unsupported effort fields must be visible in
+reasoning levels. Only levels supported by provider metadata and the translated
+wire contract should be advertised; a successful response still does not prove
+behavioral impact. Missing or unsupported effort fields must be visible in
 `doctor`; global silent dropping is not treated as capability support.
 
 The registry therefore stores `model_info.x_reasoning_efforts` separately from
@@ -69,14 +106,49 @@ The registry therefore stores `model_info.x_reasoning_efforts` separately from
 
 - Kimi K2.7 Code and MiMo V2.5: reasoning is available, but no selectable
   effort levels are advertised.
-- GLM 5.2 through OpenRouter: `high`, `xhigh`.
-- GPT-5.4 through ChatGPT OAuth: reasoning is intrinsic, but selectable effort
-  is not advertised by LiteLLM 1.92's `chatgpt/*` adapter and has not been
-  validated on that production OAuth wire path. Explicit effort is therefore
-  disabled rather than borrowing the OpenAI Platform API contract.
+- GLM 5.2 through OpenRouter: OpenRouter advertises `xhigh` and `high`, but the
+  effective selectable contract is `high` only. LiteLLM 1.92's Anthropic
+  pass-through adapter checks its own model registry and normalizes both
+  unqualified `xhigh` and `max` to `high` before constructing the downstream
+  request. Exposing either alias as a distinct level would therefore advertise
+  multiple choices for one effective wire value.
+- GPT-5.4 through ChatGPT OAuth: LiteLLM's local adapter has a reasoning slot
+  and translates Claude's adaptive-thinking effort form. LiteLLM metadata does
+  not publish selectable levels for this subscription route, and the logged-in
+  upstream has not been traced or behaviorally compared. Explicit effort is
+  therefore disabled pending that evidence, not because the local slot is
+  absent.
 - Grok 4.5: `low`, `medium`, `high`; reasoning cannot be disabled.
 
 `claude-litellm` rejects an explicit unsupported `--effort` before starting the
 proxy. This makes a missing provider slot observable instead of allowing
 LiteLLM's broad `drop_params` compatibility policy to create a false impression
 that the model searched or reasoned more deeply.
+
+Claude Code 2.1.207 sends adaptive thinking plus `output_config.effort` even
+without an explicit flag. The wrapper treats that shared/default value as
+intent and applies the selected route contract:
+
+- With no selectable effort slot, it warns; the gateway strips
+  `output_config.effort`/equivalent effort fields but retains adaptive thinking,
+  leaving depth to the provider default.
+- With exactly one allowed level, the wrapper selects it when necessary and the
+  gateway normalizes any incoming effort to that sole value.
+- With multiple allowed levels, validated values are preserved and unsupported
+  values are rejected.
+
+The fifth live qualification gate sends the same adaptive-thinking plus
+`output_config.effort` shape and requires a non-empty successful response under
+that route policy. It proves that the gateway handled the shape consistently;
+it does not prove that an untraceable upstream honored a particular depth.
+
+OpenRouter catalog routes retain raw claims in
+`x_provider_reasoning_efforts`, while `x_reasoning_efforts` contains only the
+effective selectable values. Capability audit JSON reports both. User-registered
+routes likewise reject `xhigh`/`max` until a pinned adapter/model-registry
+combination is qualified to preserve those values; they are never silently
+downgraded by this project's CLI.
+
+Every Claude tier and subagent is pinned to the route selected for the current
+process. Provider changes require exiting and relaunching, keeping the
+process-global effort/context/output contract aligned with one backend.

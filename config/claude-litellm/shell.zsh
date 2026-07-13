@@ -1,9 +1,19 @@
 # Claude Code on non-Anthropic models through the local LiteLLM proxy.
 
-if ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/claude-litellm}/config/ai-litellm/lib.zsh" ]]; then
-  source "${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/claude-litellm}/config/ai-litellm/lib.zsh"
-elif ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
-  source "$HOME/.config/ai-litellm/lib.zsh"
+shell_package_home="${AI_LITELLM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/claude-litellm}"
+if ! typeset -f ai_litellm >/dev/null 2>&1; then
+  if [[ -e "$shell_package_home/install-manifest.json" || -L "$shell_package_home/install-manifest.json" ]]; then
+    if [[ ! -f "$shell_package_home/install-manifest.json" || -L "$shell_package_home/install-manifest.json" || \
+          ! -f "$shell_package_home/config/ai-litellm/lib.zsh" || -L "$shell_package_home/config/ai-litellm/lib.zsh" ]]; then
+      echo "claude-litellm installation is damaged; refusing legacy helper fallback. Reinstall the package." >&2
+      return 1 2>/dev/null || exit 1
+    fi
+    source "$shell_package_home/config/ai-litellm/lib.zsh"
+  elif [[ -f "$shell_package_home/config/ai-litellm/lib.zsh" && ! -L "$shell_package_home/config/ai-litellm/lib.zsh" ]]; then
+    source "$shell_package_home/config/ai-litellm/lib.zsh"
+  elif [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
+    source "$HOME/.config/ai-litellm/lib.zsh"
+  fi
 fi
 
 export CLAUDE_LITELLM_HARNESS="${CLAUDE_LITELLM_HARNESS:-claude}"
@@ -18,37 +28,71 @@ export XAI_OAUTH_TOKEN_DIR="${XAI_OAUTH_TOKEN_DIR:-$CLAUDE_LITELLM_AUTH_HOME/gro
 export CHATGPT_DEFAULT_INSTRUCTIONS="${CHATGPT_DEFAULT_INSTRUCTIONS:-You are the model backend for Claude Code. Follow the provided instructions and tool schemas.}"
 
 _claude_litellm_oauth_python() {
-  local managed="$AI_LITELLM_HOME/runtime/venv/bin/python"
-  if [[ -x "$managed" ]]; then
-    print -r -- "$managed"
-  else
-    command -v python3
-  fi
+  ai_litellm_litellm_python
 }
 
 _claude_litellm_auth() {
-  local python action was_running=0 rc
-  python="$(_claude_litellm_oauth_python)" || {
-    echo "claude-litellm: Python runtime is unavailable; reinstall the package." >&2
-    return 1
-  }
+  local python action was_running=0 stopped=0 rc=0 restart_rc=0 auth_fd="" auth_lock lifecycle_held=0
   action="${1:-}"
-  if [[ "$action" == login || "$action" == logout ]]; then
-    ai_litellm_pid_running && was_running=1
-  fi
-  "$python" "$AI_LITELLM_HOME/config/claude-litellm/oauth.py" "$@"
-  rc=$?
+  {
+    if [[ "$action" == login || "$action" == logout ]]; then
+      ai_litellm_lifecycle_lock_acquire || return $?
+      lifecycle_held=1
+      ai_litellm_install_integrity_ok || {
+        echo "claude-litellm: installed package/runtime integrity failed; reinstall before changing OAuth state." >&2
+        return 1
+      }
+    fi
+    python="$(_claude_litellm_oauth_python)" || {
+      echo "claude-litellm: Python runtime is unavailable; reinstall the package." >&2
+      return 1
+    }
+    [[ -f "$AI_LITELLM_HOME/config/claude-litellm/oauth.py" && \
+       ! -L "$AI_LITELLM_HOME/config/claude-litellm/oauth.py" ]] || {
+      echo "claude-litellm: OAuth adapter is unavailable or unsafe; reinstall the package." >&2
+      return 1
+    }
+    if [[ "$action" == login || "$action" == logout ]]; then
+      # Python validates state/auth/provider one component at a time and creates
+      # only descendants of the already-existing, non-symlink state root. Do
+      # not let shell mkdir/chmod follow an attacker-controlled ancestor first.
+      ai_litellm_python_isolated "$python" \
+        "$AI_LITELLM_HOME/config/claude-litellm/oauth.py" --prepare-storage || return $?
+      zmodload zsh/system || return 1
+      auth_lock="$CLAUDE_LITELLM_AUTH_HOME/.auth-mutation.lock"
+      ai_litellm_lock_file_prepare "$auth_lock" || return 1
+      if ! zsystem flock -t 0 -f auth_fd "$auth_lock"; then
+        echo "claude-litellm: another OAuth login/logout is already in progress." >&2
+        return 1
+      fi
+      chmod 600 "$auth_lock" 2>/dev/null || true
+      ai_litellm_pid_running && was_running=1
+      if (( was_running )); then
+        echo "claude-litellm: stopping the managed proxy before OAuth state changes." >&2
+        ai_litellm_stop >&2 || return 1
+        stopped=1
+      fi
+    fi
+    if ai_litellm_python_isolated "$python" \
+      "$AI_LITELLM_HOME/config/claude-litellm/oauth.py" "$@"; then
+      rc=0
+    else
+      rc=$?
+    fi
+  } always {
+    # ChatGPT deployment construction resolves OAuth during proxy startup. The
+    # process must remain down for the whole credential transaction so refresh
+    # cannot recreate a logout or overwrite a new login. Always restore prior
+    # liveness and release the kernel lock, including Ctrl-C/error paths.
+    if (( stopped )); then
+      echo "claude-litellm: restarting the managed proxy after the OAuth command." >&2
+      ai_litellm_start >&2 || restart_rc=$?
+    fi
+    [[ "$auth_fd" == <-> ]] && zsystem flock -u "$auth_fd" 2>/dev/null || true
+    (( lifecycle_held )) && ai_litellm_lifecycle_lock_release
+  }
   (( rc == 0 )) || return $rc
-
-  # ChatGPT deployment construction resolves OAuth during proxy startup.  It is
-  # intentionally omitted while logged out; restart a managed proxy after any
-  # credential transition so the route is added/removed and logout cannot keep
-  # using an access token cached by the old process.  Keep notices off stdout so
-  # `auth ... --json` remains valid JSON.
-  if (( was_running )); then
-    echo "claude-litellm: OAuth state changed; restarting the managed proxy." >&2
-    ai_litellm_restart >&2 || return $?
-  fi
+  (( restart_rc == 0 )) || return $restart_rc
   return 0
 }
 
@@ -85,7 +129,7 @@ _claude_litellm_oauth_doctor() {
     echo "fail OAuth runtime: Python unavailable" >&2
     return 1
   }
-  PYTHONPATH="$AI_LITELLM_CONFIG_HOME${PYTHONPATH:+:$PYTHONPATH}" "$python" -c '
+  ai_litellm_python_configured "$python" -c '
 import importlib.metadata
 from ai_litellm_callbacks.oauth_guard import PATCH_ACTIVE
 from litellm.llms.chatgpt.authenticator import Authenticator
@@ -157,9 +201,9 @@ _claude_litellm_target_model_for_request() {
   printf '%s\n' "$resolved_model"
 }
 
-# For tiers, return the tier name itself: --model <tier> preserves Claude
-# Code's native tier semantics (in-session /model opus|sonnet|haiku, background
-# calls on haiku) while ANTHROPIC_DEFAULT_<TIER>_MODEL carries the real route.
+# For tiers, return the tier label for Claude's UI. The launch environment maps
+# every tier and subagent to the same validated route, so in-session /model can
+# change a label but cannot cross the provider/session boundary.
 _claude_litellm_resolve_model_arg() {
   local requested="$1"
   if [[ -z "$requested" ]]; then
@@ -180,6 +224,20 @@ _claude_litellm_resolve_model_arg() {
 }
 
 claude-litellm-status() {
+  if (( $# > 1 )) || { (( $# == 1 )) && [[ "$1" != "--json" ]] }; then
+    echo "Usage: claude-litellm status [--json]" >&2
+    return 1
+  fi
+  if [[ "${1:-}" == "--json" ]]; then
+    local control oauth
+    control="$(ai_litellm status --json)" || return $?
+    oauth="$(_claude_litellm_auth status all --json)" || return $?
+    node -e '
+const [control, oauth] = process.argv.slice(1).map(JSON.parse);
+process.stdout.write(JSON.stringify({...control, oauth}) + "\n");
+' "$control" "$oauth"
+    return $?
+  fi
   echo "Claude settings: $CLAUDE_LITELLM_SETTINGS"
   echo "Claude config:   $CLAUDE_LITELLM_CLAUDE_CONFIG"
   echo "Overlay:         $CLAUDE_LITELLM_SETTINGS_ARG_PROXY"
@@ -200,14 +258,46 @@ claude-litellm-list() {
   ai_litellm_list
 }
 
+_claude_litellm_shared_effort() {
+  local target_root file configured="" candidate=""
+  target_root="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" isolation.sharedEnvironment.targetRoot 2>/dev/null || true)"
+  for file in "$target_root/settings.json" "$target_root/settings.local.json"; do
+    [[ -f "$file" && ! -L "$file" ]] || continue
+    candidate="$(jq -r '.effortLevel // empty' "$file" 2>/dev/null || true)"
+    [[ -n "$candidate" ]] || continue
+    configured="$candidate"
+  done
+  # Claude Code 2.1.207 emits adaptive thinking + high when no setting/flag is
+  # present. Treat that wire default as intent instead of pretending effort is
+  # absent at validation time.
+  [[ -n "$configured" ]] || configured=high
+  print -r -- "${configured:l}"
+}
+
 _claude_litellm_reasoning_args() {
-  local harness_effort
+  local model="$1"
+  shift
+  local harness_effort allowed implicit selected
   harness_effort="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.reasoning.effort 2>/dev/null || true)"
   if [[ -n "$harness_effort" && "$harness_effort" != "auto" && "$harness_effort" != "none" ]]; then
     if ! ai_litellm_cli_arg_present --effort "$@"; then
       printf '%s\n%s\n' --effort "$harness_effort"
     fi
+    return 0
   fi
+  ai_litellm_cli_arg_present --effort "$@" && return 0
+  allowed="$(ai_litellm_model_reasoning_allowed_efforts "$model" 2>/dev/null || true)"
+  [[ -n "$allowed" ]] || return 0
+  implicit="$(_claude_litellm_shared_effort)"
+  case " $allowed " in
+    *" $implicit "*) return 0 ;;
+  esac
+  if [[ " $allowed " == *" high "* ]]; then
+    selected=high
+  else
+    selected="${allowed%% *}"
+  fi
+  printf '%s\n%s\n' --effort "$selected"
 }
 
 _claude_litellm_effective_effort() {
@@ -242,26 +332,43 @@ _claude_litellm_effective_effort() {
 _claude_litellm_validate_effort() {
   local model="$1"
   shift
-  local effort allowed rc
+  local effort allowed rc explicit=0
   effort="$(_claude_litellm_effective_effort "$@")"
   rc=$?
   if (( rc == 1 )); then
-    return 0
+    effort="$(_claude_litellm_shared_effort)"
   elif (( rc != 0 )); then
     echo "claude-litellm: --effort requires a value." >&2
     return 1
   fi
+  ai_litellm_cli_arg_present --effort "$@" && explicit=1
+
+  case "$effort" in
+    low|medium|high|xhigh|max) ;;
+    *)
+      echo "claude-litellm: --effort=$effort is not accepted by this Claude Code CLI (allowed: low, medium, high, xhigh, max)." >&2
+      return 1
+      ;;
+  esac
 
   allowed="$(ai_litellm_model_reasoning_allowed_efforts "$model" 2>/dev/null || true)"
   if [[ -z "$allowed" ]]; then
-    echo "claude-litellm: $model supports reasoning but does not expose selectable effort levels; refusing --effort=$effort instead of silently dropping it." >&2
-    return 1
+    if (( explicit )); then
+      echo "claude-litellm: $model supports reasoning but does not expose selectable effort levels; refusing --effort=$effort instead of silently dropping it." >&2
+      return 1
+    fi
+    echo "claude-litellm: $model has no validated selectable effort slot; Claude's implicit effort=$effort will be removed at the gateway and the provider will use its reasoning default." >&2
+    return 0
   fi
   case " $allowed " in
     *" $effort "*) return 0 ;;
   esac
-  echo "claude-litellm: --effort=$effort is not supported by $model (allowed: ${allowed// /, })." >&2
-  return 1
+  if (( explicit )); then
+    echo "claude-litellm: --effort=$effort is not supported by $model (allowed: ${allowed// /, })." >&2
+    return 1
+  fi
+  echo "claude-litellm: shared/default effort=$effort is not supported by $model; the wrapper will pin an allowed effort (${allowed// /, })." >&2
+  return 0
 }
 
 # Shared launch preparation: ensure the shared-environment symlink layer,
@@ -271,7 +378,12 @@ _claude_litellm_launch_prepare() {
   # Overlay paths inherited from a pre-upgrade shell point inside the config
   # dir, where settings.json is now a shared symlink; rendering there would
   # chmod/replace the native file through the link. Reset such values.
-  local fallback
+  local fallback canonical
+  canonical="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" paths.settingsArgProxy 2>/dev/null || true)"
+  if [[ -n "$canonical" && "$CLAUDE_LITELLM_SETTINGS_ARG_PROXY" != "$canonical" ]]; then
+    echo "claude-litellm: ignoring non-canonical proxy settings path; using $canonical" >&2
+    typeset -g "CLAUDE_LITELLM_SETTINGS_ARG_PROXY=$canonical"
+  fi
   case "$CLAUDE_LITELLM_SETTINGS_ARG_PROXY" in
     "$CLAUDE_LITELLM_CLAUDE_CONFIG"/*)
         fallback="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" paths.settingsArgProxy 2>/dev/null || printf '%s/overlay-settings-proxy.json' "$CLAUDE_LITELLM_HOME")"
@@ -288,6 +400,20 @@ _claude_litellm_launch_prepare() {
   ai_litellm_render_claude_settings "$CLAUDE_LITELLM_HARNESS" "$CLAUDE_LITELLM_SETTINGS_ARG_PROXY"
 }
 
+_claude_litellm_assert_safe_passthrough() {
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "--" ]] && break
+    case "$arg" in
+      --model|--model=*|--settings|--settings=*|--fallback-model|--fallback-model=*)
+        echo "claude-litellm: $arg is managed by the wrapper and cannot be passed through." >&2
+        echo "Select a model with: claude-litellm <tier-or-registered-route> [claude args...]" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
 _claude_litellm_launch_proxy() {
   local requested="$1"
   shift
@@ -302,9 +428,11 @@ _claude_litellm_launch_proxy() {
     return 1
   }
 
+  _claude_litellm_assert_safe_passthrough "$@" || return $?
   _claude_litellm_validate_effort "$target_model" "$@" || return $?
   ai_litellm_model_runtime_ready "$target_model" || return $?
   _claude_litellm_require_oauth "$target_model" || return $?
+  ai_litellm_model_provider_credentials_ready "$target_model" || return $?
   ai_litellm_start >/dev/null || return $?
   _claude_litellm_launch_prepare || return $?
 
@@ -321,6 +449,9 @@ _claude_litellm_launch_proxy() {
 
   local base_url_env auth_env discovery_env isolation_env tier_model_prefix tier_display_prefix
   local auto_compact_window_env max_output_tokens_env empty_api_key_env attribution_env
+  local loopback_no_proxy no_proxy_entry inherited_no_proxy
+  local -a no_proxy_entries no_proxy_merged
+  local -A no_proxy_seen
   base_url_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.baseUrlEnv 2>/dev/null || printf 'ANTHROPIC_BASE_URL')"
   auth_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" provider.auth.env 2>/dev/null || printf 'ANTHROPIC_AUTH_TOKEN')"
   empty_api_key_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.emptyApiKeyEnv 2>/dev/null || printf 'ANTHROPIC_API_KEY')"
@@ -331,6 +462,21 @@ _claude_litellm_launch_proxy() {
   auto_compact_window_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.autoCompactWindowEnv 2>/dev/null || printf 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')"
   max_output_tokens_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.maxOutputTokensEnv 2>/dev/null || printf 'CLAUDE_CODE_MAX_OUTPUT_TOKENS')"
   attribution_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.attributionHeaderEnv 2>/dev/null || printf 'CLAUDE_CODE_ATTRIBUTION_HEADER')"
+  # Preserve bypasses supplied in either conventional case. Both child
+  # variables receive the same de-duplicated value so libraries choosing one
+  # spelling cannot accidentally lose the user's existing exclusions.
+  inherited_no_proxy="${NO_PROXY:-}"
+  if [[ -n "${no_proxy:-}" ]]; then
+    [[ -n "$inherited_no_proxy" ]] && inherited_no_proxy+=","
+    inherited_no_proxy+="$no_proxy"
+  fi
+  no_proxy_entries=("${(@s:,:)inherited_no_proxy}" 127.0.0.1 localhost ::1)
+  for no_proxy_entry in "${no_proxy_entries[@]}"; do
+    [[ -n "$no_proxy_entry" && -z "${no_proxy_seen[$no_proxy_entry]-}" ]] || continue
+    no_proxy_seen[$no_proxy_entry]=1
+    no_proxy_merged+=("$no_proxy_entry")
+  done
+  loopback_no_proxy="${(j:,:)no_proxy_merged}"
 
   local -a env_assignments
   env_assignments=(
@@ -343,6 +489,8 @@ _claude_litellm_launch_proxy() {
     "$discovery_env=1"
     "$isolation_env=$CLAUDE_LITELLM_CLAUDE_CONFIG"
     "$attribution_env=0"
+    "NO_PROXY=$loopback_no_proxy"
+    "no_proxy=$loopback_no_proxy"
   )
 
   local tier tier_upper tier_model tier_display
@@ -350,10 +498,13 @@ _claude_litellm_launch_proxy() {
   tiers=("${(@f)$(_claude_litellm_tiers)}")
   for tier in "${tiers[@]}"; do
     tier_upper="${tier:u}"
-    tier_model="$(_claude_litellm_json "aliases.$tier" 2>/dev/null || true)"
-    # Display name defaults to the real model id so the picker shows what
-    # actually serves the tier; displayNames.<tier> remains a cosmetic override.
-    tier_display="$(_claude_litellm_json "displayNames.$tier" 2>/dev/null || printf '%s' "$tier_model")"
+    # Claude's effort/context/output knobs are process-global. Pin every tier
+    # and subagent surface to the route validated for this process; otherwise
+    # /model or fallback selection could bypass OAuth/runtime/effort checks and
+    # retain an incompatible token budget. Switch providers by exiting and
+    # relaunching `claude-litellm <route>`.
+    tier_model="$target_model"
+    tier_display="$target_model"
     env_assignments+=(
       "${tier_model_prefix}_${tier_upper}_MODEL=$tier_model"
     )
@@ -374,7 +525,7 @@ _claude_litellm_launch_proxy() {
 
   local reasoning_output
   local -a claude_extra_args
-  reasoning_output="$(_claude_litellm_reasoning_args "$@")"
+  reasoning_output="$(_claude_litellm_reasoning_args "$target_model" "$@")"
   [[ -n "$reasoning_output" ]] && claude_extra_args=("${(@f)reasoning_output}")
 
   ai_litellm_harness_exec_env "$CLAUDE_LITELLM_HARNESS" "${env_assignments[@]}" -- \
@@ -437,7 +588,7 @@ claude-litellm() {
       ;;
     uninstall)
       shift
-      "$AI_LITELLM_HOME/scripts/uninstall.zsh" "$@"
+      ai_litellm uninstall "$@"
       return $?
       ;;
   esac

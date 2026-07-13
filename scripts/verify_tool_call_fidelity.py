@@ -17,9 +17,13 @@ block (response fidelity). Zero spend, deterministic, CI-able — it isolates th
 fabric's translation layer from any real model's competence.
 
 Exit 0 iff every critical case passes. `--json` prints a machine-readable verdict.
-`--live-model NAME` additionally runs the same Anthropic round trips against the
-already-running deployed proxy at 127.0.0.1:4000 for NAME (BILLABLE for cloud
-routes; needs the litellm master key in the keychain) as a real-backend smoke.
+`--live-model NAME` additionally qualifies NAME through the already-running
+deployed proxy at 127.0.0.1:4000 (BILLABLE for cloud routes). The live suite has
+five gates: text SSE, a forced structured tool call, streamed tool-argument JSON,
+a tool_result continuation, and Claude Code's adaptive-thinking/effort request
+shape. `--live-only` skips the deterministic fixture.
+
+For live requests, LITELLM_MASTER_KEY takes precedence over the macOS Keychain.
 """
 from __future__ import annotations
 
@@ -188,7 +192,12 @@ def wait_for_http(url: str, timeout: float, log_path: Path | None = None) -> Non
             if "Traceback" in tail or "Address already in use" in tail:
                 raise RuntimeError(f"proxy failed to start:\n{tail}")
         time.sleep(0.4)
-    raise RuntimeError(f"timed out waiting for {url} ({last})")
+    detail = ""
+    if log_path and log_path.exists():
+        tail = log_path.read_text("utf-8", "replace")[-4000:]
+        if tail:
+            detail = f"\nproxy log tail:\n{tail}"
+    raise RuntimeError(f"timed out waiting for {url} ({last}){detail}")
 
 
 def post_messages(base: str, master_key: str, payload: dict[str, Any], timeout: float = 60.0) -> tuple[int, dict[str, Any]]:
@@ -204,13 +213,16 @@ def post_messages(base: str, master_key: str, payload: dict[str, Any], timeout: 
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, json.loads(resp.read() or b"{}")
+            body = json.loads(resp.read() or b"{}")
+            return resp.status, body if isinstance(body, dict) else {}
     except urllib.error.HTTPError as exc:
         try:
             body = json.loads(exc.read() or b"{}")
         except Exception:  # noqa: BLE001
             body = {}
-        return exc.code, body
+        return exc.code, body if isinstance(body, dict) else {}
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return 0, {}
 
 
 def post_messages_stream(
@@ -236,10 +248,18 @@ def post_messages_stream(
                 data = line[5:].strip()
                 if not data or data == "[DONE]":
                     continue
-                events.append(json.loads(data))
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    return resp.status, [{"type": "invalid_sse_json"}]
+                if not isinstance(event, dict):
+                    return resp.status, [{"type": "invalid_sse_json"}]
+                events.append(event)
             return resp.status, events
     except urllib.error.HTTPError as exc:
         return exc.code, []
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0, []
 
 
 WEATHER_TOOL = {
@@ -247,6 +267,8 @@ WEATHER_TOOL = {
     "description": "Get current weather for a city",
     "input_schema": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
 }
+
+LIVE_MAX_TOKENS = 128
 
 
 def _tool_use_block(content: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -260,8 +282,44 @@ def _text_blocks(content: list[dict[str, Any]]) -> str:
     return " ".join(b.get("text", "") for b in (content or []) if isinstance(b, dict) and b.get("type") == "text")
 
 
+def _streamed_text(events: list[dict[str, Any]]) -> str:
+    fragments = [
+        event.get("delta", {}).get("text", "")
+        for event in events
+        if event.get("type") == "content_block_delta"
+        and event.get("delta", {}).get("type") == "text_delta"
+    ]
+    return "".join(fragment for fragment in fragments if isinstance(fragment, str))
+
+
+def _streamed_tool(
+    events: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool]:
+    starts = [
+        event.get("content_block", {})
+        for event in events
+        if event.get("type") == "content_block_start"
+    ]
+    tool_starts = [
+        block for block in starts
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    ]
+    raw_fragments = [
+        event.get("delta", {}).get("partial_json", "")
+        for event in events
+        if event.get("type") == "content_block_delta"
+        and event.get("delta", {}).get("type") == "input_json_delta"
+    ]
+    fragments = [fragment for fragment in raw_fragments if isinstance(fragment, str)]
+    try:
+        streamed_input = json.loads("".join(fragments)) if fragments else None
+    except json.JSONDecodeError:
+        streamed_input = None
+    return (tool_starts[0] if tool_starts else None, streamed_input, bool(fragments))
+
+
 def run_cases(base: str, master_key: str, mock: MockState | None, model: str) -> dict[str, Any]:
-    """Run the four fidelity cases against `base` for `model`. mock=None for live mode."""
+    """Run translation-fidelity cases; mock=None permits live-shaped stream IDs."""
     result: dict[str, Any] = {"model": model}
 
     # Case 1 — single-turn: a tool definition + a triggering prompt must come back
@@ -337,20 +395,17 @@ def run_cases(base: str, master_key: str, mock: MockState | None, model: str) ->
         "model": model, "max_tokens": 256, "tools": [WEATHER_TOOL],
         "messages": [{"role": "user", "content": "Weather in Seoul? Use the tool."}],
     })
-    starts = [event.get("content_block", {}) for event in events
-              if event.get("type") == "content_block_start"]
-    tool_starts = [block for block in starts if block.get("type") == "tool_use"]
-    argument_fragments = [event.get("delta", {}).get("partial_json", "") for event in events
-                          if event.get("type") == "content_block_delta"
-                          and event.get("delta", {}).get("type") == "input_json_delta"]
-    try:
-        streamed_input = json.loads("".join(argument_fragments))
-    except json.JSONDecodeError:
-        streamed_input = None
+    tool_start, streamed_input, saw_argument_delta = _streamed_tool(events)
+    stream_id = tool_start.get("id") if tool_start else None
+    stream_id_ok = (
+        stream_id == "call_stream_1"
+        if mock is not None
+        else isinstance(stream_id, str) and bool(stream_id.strip())
+    )
     result["streaming_tool_arguments_roundtrip"] = bool(
-        status == 200 and tool_starts
-        and tool_starts[0].get("id") == "call_stream_1"
-        and tool_starts[0].get("name") == "get_weather"
+        status == 200 and tool_start and saw_argument_delta
+        and stream_id_ok
+        and tool_start.get("name") == "get_weather"
         and streamed_input == {"city": "Seoul"}
     )
     result["streaming_status"] = status
@@ -404,6 +459,177 @@ def run_cases(base: str, master_key: str, mock: MockState | None, model: str) ->
     return result
 
 
+def _valid_weather_input(value: Any) -> bool:
+    return bool(
+        isinstance(value, dict)
+        and isinstance(value.get("city"), str)
+        and value["city"].strip()
+    )
+
+
+def run_live_qualification(base: str, master_key: str, model: str) -> dict[str, Any]:
+    """Qualify one deployed route through the Anthropic Messages API surface."""
+    result: dict[str, Any] = {
+        "model": model,
+        "base_url": base,
+        "max_tokens": LIVE_MAX_TOKENS,
+    }
+
+    # Gate 1: Claude Code consumes SSE, so a JSON-only success is insufficient.
+    text_status, text_events = post_messages_stream(base, master_key, {
+        "model": model,
+        "max_tokens": LIVE_MAX_TOKENS,
+        "messages": [{
+            "role": "user",
+            "content": "Reply with one short sentence confirming this route is ready.",
+        }],
+    })
+    streamed_text = _streamed_text(text_events)
+    result["text_sse"] = bool(text_status == 200 and streamed_text.strip())
+    result["text_sse_status"] = text_status
+    result["text_sse_chars"] = len(streamed_text)
+
+    tool_prompt = (
+        "Call get_weather exactly once for Seoul. "
+        "Put the city in the structured city argument."
+    )
+    forced_payload = {
+        "model": model,
+        "max_tokens": LIVE_MAX_TOKENS,
+        "tools": [WEATHER_TOOL],
+        "tool_choice": {"type": "tool", "name": "get_weather"},
+        "messages": [{"role": "user", "content": tool_prompt}],
+    }
+
+    # Gate 2: a forced tool must emerge as a native Anthropic tool_use block.
+    tool_status, tool_resp = post_messages(base, master_key, forced_payload)
+    tool_block = _tool_use_block(tool_resp.get("content", [])) if tool_status == 200 else None
+    tool_id = tool_block.get("id") if tool_block else None
+    result["forced_structured_tool"] = bool(
+        tool_status == 200
+        and tool_resp.get("stop_reason") == "tool_use"
+        and tool_block is not None
+        and isinstance(tool_id, str)
+        and bool(tool_id.strip())
+        and tool_block.get("name") == "get_weather"
+        and _valid_weather_input(tool_block.get("input"))
+    )
+    result["forced_structured_tool_status"] = tool_status
+
+    # Gate 3: streaming tool arguments must use input_json_delta and concatenate
+    # into valid JSON. Live providers generate arbitrary call IDs; only the
+    # deterministic mock fixture is required to emit call_stream_1.
+    stream_status, tool_events = post_messages_stream(base, master_key, forced_payload)
+    stream_start, stream_input, saw_input_delta = _streamed_tool(tool_events)
+    stream_id = stream_start.get("id") if stream_start else None
+    result["streaming_input_json_delta"] = bool(
+        stream_status == 200
+        and stream_start is not None
+        and isinstance(stream_id, str)
+        and bool(stream_id.strip())
+        and stream_start.get("name") == "get_weather"
+        and saw_input_delta
+        and _valid_weather_input(stream_input)
+    )
+    result["streaming_input_json_delta_status"] = stream_status
+    result["streaming_input_json_valid"] = isinstance(stream_input, dict)
+
+    # Gate 4: use the actual model-generated ID and input in the follow-up. This
+    # catches adapters that can emit a call but cannot replay tool_result history.
+    continuation_status = 0
+    continuation_text = ""
+    assistant_content = tool_resp.get("content")
+    if (
+        tool_block is not None
+        and isinstance(tool_id, str)
+        and tool_id.strip()
+        and isinstance(assistant_content, list)
+    ):
+        continuation_status, continuation_resp = post_messages(base, master_key, {
+            "model": model,
+            "max_tokens": LIVE_MAX_TOKENS,
+            "tools": [WEATHER_TOOL],
+            "messages": [
+                {"role": "user", "content": tool_prompt},
+                # Replay the exact assistant content Claude Code received.
+                # Reasoning-capable adapters may require thinking signatures,
+                # encrypted items, or provider metadata preceding tool_use.
+                {"role": "assistant", "content": assistant_content},
+                {"role": "user", "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": "18C and sunny",
+                }]},
+            ],
+        })
+        continuation_text = _text_blocks(continuation_resp.get("content", []))
+    result["tool_result_continuation"] = bool(
+        continuation_status == 200 and continuation_text.strip()
+    )
+    result["tool_result_continuation_status"] = continuation_status
+
+    # Gate 5 mirrors Claude Code 2.1.207's real default request shape. The
+    # gateway must either forward a validated selectable effort, normalize a
+    # single-level route (GLM -> high), or remove the effort while preserving
+    # adaptive/provider-default reasoning for routes with no selectable slot.
+    effort_status, effort_resp = post_messages(base, master_key, {
+        "model": model,
+        "max_tokens": LIVE_MAX_TOKENS,
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
+        "messages": [{
+            "role": "user",
+            "content": "Think as the selected provider normally would, then reply OK.",
+        }],
+    })
+    result["claude_adaptive_effort_policy"] = bool(
+        effort_status == 200 and _text_blocks(effort_resp.get("content", [])).strip()
+    )
+    result["claude_adaptive_effort_policy_status"] = effort_status
+
+    gates = (
+        "text_sse",
+        "forced_structured_tool",
+        "streaming_input_json_delta",
+        "tool_result_continuation",
+        "claude_adaptive_effort_policy",
+    )
+    result["all_gates_pass"] = all(result[gate] for gate in gates)
+    return result
+
+
+def resolve_live_master_key() -> str:
+    """Resolve live auth without ever printing the secret."""
+    env_key = os.environ.get("LITELLM_MASTER_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    sec = shutil.which("security")
+    if sec:
+        try:
+            keychain_key = subprocess.check_output(
+                [
+                    sec,
+                    "find-generic-password",
+                    "-s",
+                    "litellm-master-key",
+                    "-a",
+                    os.environ.get("USER", ""),
+                    "-w",
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            if keychain_key:
+                return keychain_key
+        except subprocess.CalledProcessError:
+            pass
+    raise RuntimeError(
+        "live qualification needs LITELLM_MASTER_KEY or the "
+        "litellm-master-key macOS Keychain item"
+    )
+
+
 def write_config(tmpdir: Path, mock_port: int, master_key: str) -> Path:
     cfg = f"""model_list:
   - model_name: mock-tool-model
@@ -434,89 +660,160 @@ litellm_settings:
     return path
 
 
+def default_litellm_bin() -> str:
+    configured = os.environ.get("LITELLM_BIN")
+    if configured:
+        return configured
+    # Keep the proxy under test in the same Python environment as this
+    # verifier. A different PATH-level LiteLLM may have another version or an
+    # incomplete proxy extra (for example no prisma), producing a false
+    # translation failure before any fidelity case runs.
+    sibling = Path(sys.executable).with_name("litellm")
+    if sibling.is_file() and os.access(sibling, os.X_OK):
+        return str(sibling)
+    return "litellm"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--json", action="store_true", help="emit machine-readable verdict")
-    ap.add_argument("--litellm-bin", default=os.environ.get("LITELLM_BIN", "litellm"))
-    ap.add_argument("--live-model", help="also run round trips against the deployed proxy (127.0.0.1:4000) for this model (BILLABLE)")
+    ap.add_argument("--litellm-bin", default=default_litellm_bin())
+    ap.add_argument(
+        "--live-model",
+        help="qualify this deployed model through /v1/messages (BILLABLE for cloud routes)",
+    )
+    ap.add_argument(
+        "--live-only",
+        action="store_true",
+        help="skip the deterministic fixture and run only the live qualification gates",
+    )
+    ap.add_argument(
+        "--live-base-url",
+        default=os.environ.get("LITELLM_BASE_URL", "http://127.0.0.1:4000"),
+        help="deployed LiteLLM base URL (default: %(default)s)",
+    )
     args = ap.parse_args()
+    if args.live_only and not args.live_model:
+        ap.error("--live-only requires --live-model NAME")
 
-    master_key = "sk-fidelity-test"
-    mock_state = MockState()
-    mock_port = find_free_port()
-    proxy_port = find_free_port()
-    mock_server = http.server.ThreadingHTTPServer(("127.0.0.1", mock_port), make_mock_handler(mock_state))
-    mock_thread = threading.Thread(target=mock_server.serve_forever, daemon=True)
-    mock_thread.start()
-
-    tmp = Path(tempfile.mkdtemp(prefix="litellm-fidelity-"))
-    cfg = write_config(tmp, mock_port, master_key)
-    log_path = tmp / "litellm.log"
-    env = dict(os.environ)
     verdict: dict[str, Any] = {}
-    proc = None
-    try:
-        with open(log_path, "wb") as log:
-            proc = subprocess.Popen(
-                [args.litellm_bin, "--config", str(cfg), "--port", str(proxy_port), "--host", "127.0.0.1"],
-                cwd=str(tmp), env=env, stdout=log, stderr=subprocess.STDOUT,
+
+    if not args.live_only:
+        mock_master_key = "sk-fidelity-test"
+        mock_state = MockState()
+        mock_port = find_free_port()
+        proxy_port = find_free_port()
+        mock_server = http.server.ThreadingHTTPServer(
+            ("127.0.0.1", mock_port), make_mock_handler(mock_state)
+        )
+        mock_thread = threading.Thread(target=mock_server.serve_forever, daemon=True)
+        mock_thread.start()
+
+        tmp = Path(tempfile.mkdtemp(prefix="litellm-fidelity-"))
+        cfg = write_config(tmp, mock_port, mock_master_key)
+        log_path = tmp / "litellm.log"
+        proc = None
+        try:
+            proxy_env = dict(os.environ)
+            proxy_env.pop("PYTHONPATH", None)
+            proxy_env.pop("PYTHONHOME", None)
+            proxy_env["PYTHONDONTWRITEBYTECODE"] = "1"
+            with open(log_path, "wb") as log:
+                proc = subprocess.Popen(
+                    [
+                        args.litellm_bin,
+                        "--config",
+                        str(cfg),
+                        "--port",
+                        str(proxy_port),
+                        "--host",
+                        "127.0.0.1",
+                    ],
+                    cwd=str(tmp),
+                    env=proxy_env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                )
+            wait_for_http(
+                f"http://127.0.0.1:{proxy_port}/v1/models",
+                timeout=60,
+                log_path=log_path,
             )
-        wait_for_http(f"http://127.0.0.1:{proxy_port}/v1/models", timeout=60, log_path=log_path)
-        verdict["mock"] = run_cases(f"http://127.0.0.1:{proxy_port}", master_key, mock_state, "mock-tool-model")
-    finally:
-        if proc is not None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        mock_server.shutdown()
-        shutil.rmtree(tmp, ignore_errors=True)
+            verdict["mock"] = run_cases(
+                f"http://127.0.0.1:{proxy_port}",
+                mock_master_key,
+                mock_state,
+                "mock-tool-model",
+            )
+        finally:
+            if proc is not None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=10)
+            mock_server.shutdown()
+            mock_server.server_close()
+            shutil.rmtree(tmp, ignore_errors=True)
 
     if args.live_model:
-        live_key = master_key
-        sec = shutil.which("security")
-        if sec:
-            try:
-                live_key = subprocess.check_output(
-                    [sec, "find-generic-password", "-s", "litellm-master-key", "-a", os.environ.get("USER", ""), "-w"],
-                    text=True,
-                ).strip() or master_key
-            except subprocess.CalledProcessError:
-                pass
-        verdict["live"] = run_cases("http://127.0.0.1:4000", live_key, None, args.live_model)
+        try:
+            live_key = resolve_live_master_key()
+        except RuntimeError as exc:
+            ap.error(str(exc))
+        verdict["live"] = run_live_qualification(
+            args.live_base_url.rstrip("/"), live_key, args.live_model
+        )
 
-    critical = [
-        verdict["mock"]["single_turn_tool_use_roundtrip"],
-        verdict["mock"].get("request_tools_translated", False),
-        verdict["mock"]["multiturn_tool_result_roundtrip"],
-        verdict["mock"].get("multiturn_history_translated", False),
-        verdict["mock"]["thinking_plus_tooluse_resume_ok"],
-        verdict["mock"].get("thinking_signature_forwarded", False),
-        verdict["mock"]["streaming_tool_arguments_roundtrip"],
-        verdict["mock"].get("output_config_effort_forwarded", False),
-        verdict["mock"].get("drop_params_does_not_fake_effort_support", False),
-    ]
-    verdict["all_critical_pass"] = all(critical)
+    critical: list[bool] = []
+    if "mock" in verdict:
+        mock = verdict["mock"]
+        critical.extend([
+            mock["single_turn_tool_use_roundtrip"],
+            mock.get("request_tools_translated", False),
+            mock["multiturn_tool_result_roundtrip"],
+            mock.get("multiturn_history_translated", False),
+            mock["thinking_plus_tooluse_resume_ok"],
+            mock.get("thinking_signature_forwarded", False),
+            mock["streaming_tool_arguments_roundtrip"],
+            mock.get("output_config_effort_forwarded", False),
+            mock.get("drop_params_does_not_fake_effort_support", False),
+        ])
+    if "live" in verdict:
+        live = verdict["live"]
+        critical.extend([
+            live.get("text_sse", False),
+            live.get("forced_structured_tool", False),
+            live.get("streaming_input_json_delta", False),
+            live.get("tool_result_continuation", False),
+            live.get("claude_adaptive_effort_policy", False),
+        ])
+    verdict["all_critical_pass"] = bool(critical) and all(critical)
 
     if args.json:
         print(json.dumps(verdict, indent=2))
     else:
-        m = verdict["mock"]
-        print("Tool-call fidelity (mock provider, deterministic):")
-        print(f"  single-turn tool_use round-trip ............ {'PASS' if m['single_turn_tool_use_roundtrip'] else 'FAIL'}")
-        print(f"  Anthropic tools -> OpenAI request .......... {'PASS' if m.get('request_tools_translated') else 'FAIL'}")
-        print(f"  multi-turn tool_result round-trip .......... {'PASS' if m['multiturn_tool_result_roundtrip'] else 'FAIL'}")
-        print(f"  tool_use+tool_result -> OpenAI history ..... {'PASS' if m.get('multiturn_history_translated') else 'FAIL'}")
-        print(f"  thinking+tool_use resume (no 400) .......... {'PASS' if m['thinking_plus_tooluse_resume_ok'] else 'FAIL'} (status {m.get('thinking_plus_tooluse_status')})")
-        print(f"  thinking signature forwarded upstream ...... {'PASS' if m.get('thinking_signature_forwarded') else 'FAIL'}")
-        print(f"  streaming tool args reassembled ............ {'PASS' if m['streaming_tool_arguments_roundtrip'] else 'FAIL'} (status {m.get('streaming_status')})")
-        print(f"  output_config.effort -> reasoning_effort ... {'PASS' if m.get('output_config_effort_forwarded') else 'FAIL'} (status {m.get('effort_status')})")
-        print(f"  dropped effort is not capability evidence . {'PASS' if m.get('drop_params_does_not_fake_effort_support') else 'FAIL'}")
+        if "mock" in verdict:
+            m = verdict["mock"]
+            print("Tool-call fidelity (mock provider, deterministic):")
+            print(f"  single-turn tool_use round-trip ............ {'PASS' if m['single_turn_tool_use_roundtrip'] else 'FAIL'}")
+            print(f"  Anthropic tools -> OpenAI request .......... {'PASS' if m.get('request_tools_translated') else 'FAIL'}")
+            print(f"  multi-turn tool_result round-trip .......... {'PASS' if m['multiturn_tool_result_roundtrip'] else 'FAIL'}")
+            print(f"  tool_use+tool_result -> OpenAI history ..... {'PASS' if m.get('multiturn_history_translated') else 'FAIL'}")
+            print(f"  thinking+tool_use resume (no 400) .......... {'PASS' if m['thinking_plus_tooluse_resume_ok'] else 'FAIL'} (status {m.get('thinking_plus_tooluse_status')})")
+            print(f"  thinking signature forwarded upstream ...... {'PASS' if m.get('thinking_signature_forwarded') else 'FAIL'}")
+            print(f"  streaming tool args reassembled ............ {'PASS' if m['streaming_tool_arguments_roundtrip'] else 'FAIL'} (status {m.get('streaming_status')})")
+            print(f"  output_config.effort -> reasoning_effort ... {'PASS' if m.get('output_config_effort_forwarded') else 'FAIL'} (status {m.get('effort_status')})")
+            print(f"  dropped effort is not capability evidence . {'PASS' if m.get('drop_params_does_not_fake_effort_support') else 'FAIL'}")
         if "live" in verdict:
-            print(f"Live backend smoke ({verdict['live']['model']}):")
-            print(f"  single-turn tool_use ....................... {'PASS' if verdict['live']['single_turn_tool_use_roundtrip'] else 'FAIL'}")
-            print(f"  multi-turn tool_result ..................... {'PASS' if verdict['live']['multiturn_tool_result_roundtrip'] else 'FAIL'}")
+            live = verdict["live"]
+            print(f"Live /v1/messages qualification ({live['model']}):")
+            print(f"  text SSE ................................... {'PASS' if live['text_sse'] else 'FAIL'} (status {live.get('text_sse_status')})")
+            print(f"  forced structured tool ..................... {'PASS' if live['forced_structured_tool'] else 'FAIL'} (status {live.get('forced_structured_tool_status')})")
+            print(f"  streaming input_json_delta ................. {'PASS' if live['streaming_input_json_delta'] else 'FAIL'} (status {live.get('streaming_input_json_delta_status')})")
+            print(f"  tool_result continuation ................... {'PASS' if live['tool_result_continuation'] else 'FAIL'} (status {live.get('tool_result_continuation_status')})")
+            print(f"  Claude adaptive+effort policy .............. {'PASS' if live['claude_adaptive_effort_policy'] else 'FAIL'} (status {live.get('claude_adaptive_effort_policy_status')})")
         print(f"=> {'OK' if verdict['all_critical_pass'] else 'FIDELITY REGRESSION'}")
 
     return 0 if verdict["all_critical_pass"] else 1

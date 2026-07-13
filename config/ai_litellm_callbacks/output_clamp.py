@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 from pathlib import Path
@@ -39,6 +40,29 @@ DEFAULT_COST_GUARDRAIL = {
 
 class GatewayCostGuardrailError(ValueError):
     pass
+
+
+class GatewayContextWindowError(ValueError):
+    pass
+
+
+class GatewayReasoningEffortError(ValueError):
+    pass
+
+
+_CONTEXT_GUARDED_CALL_TYPES = {
+    "completion",
+    "acompletion",
+    "text_completion",
+    "atext_completion",
+    "anthropic_messages",
+    "responses",
+    "aresponses",
+    "generate_content",
+    "agenerate_content",
+    "generate_content_stream",
+    "agenerate_content_stream",
+}
 
 
 def _positive_int(value: Any) -> int | None:
@@ -134,6 +158,17 @@ def _model_names(kwargs: dict[str, Any]) -> list[str]:
     return out
 
 
+def _model_info(kwargs: dict[str, Any]) -> dict[str, Any]:
+    info = kwargs.get("model_info")
+    if isinstance(info, dict):
+        return info
+    for metadata_key in ("metadata", "litellm_metadata"):
+        metadata = kwargs.get(metadata_key)
+        if isinstance(metadata, dict) and isinstance(metadata.get("model_info"), dict):
+            return metadata["model_info"]
+    return {}
+
+
 def _per_model_cap(policy: dict[str, Any], kwargs: dict[str, Any]) -> int | None:
     per_model = policy.get("perModel") or policy.get("per_model") or {}
     if not isinstance(per_model, dict):
@@ -151,12 +186,7 @@ def gateway_output_cap(kwargs: dict[str, Any]) -> int | None:
         return None
 
     cap = _per_model_cap(policy, kwargs) or _policy_value(policy, "default") or DEFAULT_POLICY["default"]
-    info = kwargs.get("model_info")
-    if not isinstance(info, dict):
-        metadata = kwargs.get("metadata")
-        info = metadata.get("model_info") if isinstance(metadata, dict) else {}
-    if not isinstance(info, dict):
-        info = {}
+    info = _model_info(kwargs)
 
     capability = _positive_int(info.get("max_output_tokens"))
     if capability is not None:
@@ -184,7 +214,7 @@ def clamp_token_reservations(kwargs: dict[str, Any]) -> dict[str, Any]:
     if cap is None:
         return kwargs
 
-    for key in ("max_tokens", "max_completion_tokens"):
+    for key in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
         if key not in kwargs or kwargs[key] is None:
             continue
         value = _positive_int(kwargs[key])
@@ -192,6 +222,85 @@ def clamp_token_reservations(kwargs: dict[str, Any]) -> dict[str, Any]:
             continue
         kwargs[key] = min(value, cap)
     return kwargs
+
+
+def _requested_effort(container: dict[str, Any]) -> str | None:
+    direct = container.get("reasoning_effort")
+    if isinstance(direct, str) and direct:
+        return direct.lower()
+    for key in ("reasoning", "output_config"):
+        value = container.get(key)
+        if isinstance(value, dict) and isinstance(value.get("effort"), str):
+            return value["effort"].lower()
+    return None
+
+
+def _set_effort(container: dict[str, Any], effort: str) -> None:
+    if "reasoning_effort" in container:
+        container["reasoning_effort"] = effort
+    changed = False
+    for key in ("reasoning", "output_config"):
+        value = container.get(key)
+        if isinstance(value, dict) and "effort" in value:
+            value["effort"] = effort
+            changed = True
+    if not changed and "reasoning_effort" not in container:
+        container["reasoning_effort"] = effort
+
+
+def _remove_effort(container: dict[str, Any]) -> None:
+    container.pop("reasoning_effort", None)
+    for key in ("reasoning", "output_config"):
+        value = container.get(key)
+        if not isinstance(value, dict):
+            continue
+        value.pop("effort", None)
+        if not value:
+            container.pop(key, None)
+
+
+def enforce_reasoning_effort_policy(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Make Claude's implicit effort obey the selected route contract.
+
+    Claude Code 2.1.207 sends adaptive thinking plus output_config.effort even
+    without ``--effort``. LiteLLM's global drop_params can otherwise discard
+    that intent for Kimi, pass an unvalidated value to MiMo, or bypass GLM's
+    high-only policy. Apply the same rule to the top-level and LiteLLM's nested
+    optional-parameter bag so hook ordering cannot create an escape hatch.
+    """
+
+    info = _model_info(kwargs)
+    raw_allowed = info.get("x_reasoning_efforts")
+    allowed = [str(value).lower() for value in raw_allowed] if isinstance(raw_allowed, list) else []
+    containers = [kwargs]
+    optional = kwargs.get("optional_params")
+    if isinstance(optional, dict):
+        containers.append(optional)
+    requested = next(
+        (effort for container in containers if (effort := _requested_effort(container))),
+        None,
+    )
+    if requested is None:
+        return kwargs
+    if not allowed:
+        for container in containers:
+            _remove_effort(container)
+        return kwargs
+    if requested in allowed:
+        return kwargs
+    if len(allowed) == 1:
+        for container in containers:
+            if _requested_effort(container) is not None:
+                _set_effort(container, allowed[0])
+        return kwargs
+    model = next(iter(_model_names(kwargs)), "unknown")
+    message = (
+        f"claude-litellm reasoning effort '{requested}' is not supported by {model}; "
+        f"allowed: {', '.join(allowed)}"
+    )
+    if LiteLLMBadRequestError is not None:
+        raise LiteLLMBadRequestError(message=message, model=model, llm_provider="claude-litellm")
+    raise GatewayReasoningEffortError(message)
 
 
 def _iter_text(value: Any) -> list[str]:
@@ -207,14 +316,14 @@ def _iter_text(value: Any) -> list[str]:
             out.extend(_iter_text(item))
         return out
     if isinstance(value, dict):
-        out = []
-        if "content" in value:
-            out.extend(_iter_text(value.get("content")))
-        elif "text" in value:
-            out.extend(_iter_text(value.get("text")))
-        else:
-            for item in value.values():
-                out.extend(_iter_text(item))
+        # Traverse every sibling. OpenAI assistant history commonly has
+        # content=null next to tool_calls[].function.arguments; prioritizing the
+        # content key would otherwise estimate a huge billable tool payload as
+        # zero input tokens.
+        out: list[str] = []
+        for key, item in value.items():
+            out.extend(_iter_text(str(key)))
+            out.extend(_iter_text(item))
         return out
     return []
 
@@ -231,21 +340,125 @@ def estimate_input_tokens(kwargs: dict[str, Any]) -> int:
     # payload slip past the guardrail to a billable backend, so traverse those
     # too. `system` is Anthropic-native; `tools`/`functions` cover both the
     # Anthropic and OpenAI request shapes the proxy sees.
-    for key in ("messages", "input", "prompt", "system", "tools", "functions"):
+    for key in ("messages", "input", "prompt", "system", "instructions", "tools", "functions"):
         if key in kwargs:
-            texts.extend(_iter_text(kwargs.get(key)))
+            value = kwargs.get(key)
+            if isinstance(value, str):
+                texts.append(value)
+                continue
+            try:
+                # Retain structural JSON syntax as well as every sibling key and
+                # value. This matters for large tool schemas and assistant tool
+                # calls whose arguments live beside content=null.
+                texts.append(json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str))
+            except Exception:
+                texts.extend(_iter_text(value))
     if not texts:
         return 0
 
     joined = "\n".join(texts)
-    by_chars = math.ceil(len(joined) / max(1, chars_per_token))
+    ascii_chars = sum(1 for character in joined if ord(character) < 128)
+    non_ascii = "".join(character for character in joined if ord(character) >= 128)
+    # Whitespace splitting and len/4 badly undercount CJK text. A Unicode
+    # codepoint is commonly one token and emoji can require more, so account
+    # for at least one token/codepoint and half of its UTF-8 byte length.
+    unicode_tokens = max(len(non_ascii), math.ceil(len(non_ascii.encode("utf-8")) / 2))
+    by_chars = math.ceil(ascii_chars / max(1, chars_per_token)) + unicode_tokens
     by_words = len(joined.split())
     return max(by_chars, by_words)
 
 
 def requested_output_tokens(kwargs: dict[str, Any]) -> int:
-    values = [_positive_int(kwargs.get("max_tokens")), _positive_int(kwargs.get("max_completion_tokens"))]
-    return max([value for value in values if value is not None] or [0])
+    info = _model_info(kwargs)
+    capability = _positive_int(info.get("max_output_tokens")) if isinstance(info, dict) else None
+    enforcement = str(info.get("x_output_enforcement") or "") if isinstance(info, dict) else ""
+    if capability is not None and (
+        "provider-natural-cap-only" in enforcement or "strips-token-limit-fields" in enforcement
+    ):
+        return capability
+    values = [
+        _positive_int(kwargs.get("max_tokens")),
+        _positive_int(kwargs.get("max_completion_tokens")),
+        _positive_int(kwargs.get("max_output_tokens")),
+    ]
+    requested = [value for value in values if value is not None]
+    if requested:
+        return max(requested)
+    # Do not mutate an omitted provider field, but price the request
+    # conservatively. Otherwise a direct compatible-API caller can omit both
+    # fields and make the total-cost guard account for zero output while the
+    # provider is still free to generate its default maximum.
+    return capability or gateway_output_cap(kwargs) or 0
+
+
+def _tokenizer_headroom_tokens(kwargs: dict[str, Any], context: int) -> int:
+    policy = _read_config_policy()
+    configured = _policy_value(policy, "tokenizer_headroom", "tokenizerHeadroom") or 0
+    # Match gateway_output_cap(): tiny local contexts receive proportional
+    # headroom, while normal/cloud contexts retain the configured absolute
+    # safety margin.
+    return min(configured, math.floor(context * 0.1))
+
+
+def gateway_context_window_decision(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Conservatively prove that the complete request fits the route window.
+
+    Every supported gateway route must publish model_info.max_input_tokens. A
+    missing or invalid value is therefore a broken routing contract, not a
+    reason to dispatch without a bound.
+    """
+
+    estimated_input = estimate_input_tokens(kwargs)
+    requested_output = requested_output_tokens(kwargs)
+    context = _positive_int(_model_info(kwargs).get("max_input_tokens"))
+    reasons: list[str] = []
+
+    if context is None:
+        headroom = 0
+        estimated_context = estimated_input + requested_output
+        reasons.append("model_info.max_input_tokens is missing or invalid")
+    else:
+        headroom = _tokenizer_headroom_tokens(kwargs, context)
+        estimated_context = estimated_input + requested_output + headroom
+        if estimated_context > context:
+            reasons.append(
+                f"estimated_input_tokens={estimated_input} + "
+                f"requested_output_tokens={requested_output} + "
+                f"tokenizer_headroom_tokens={headroom} gives "
+                f"estimated_context_tokens={estimated_context}, which exceeds "
+                f"model_info.max_input_tokens={context}"
+            )
+
+    return {
+        "allowed": not reasons,
+        "estimated_input_tokens": estimated_input,
+        "requested_output_tokens": requested_output,
+        "tokenizer_headroom_tokens": headroom,
+        "estimated_context_tokens": estimated_context,
+        "max_input_tokens": context,
+        "reasons": reasons,
+    }
+
+
+def enforce_context_window(kwargs: dict[str, Any]) -> dict[str, Any]:
+    decision = gateway_context_window_decision(kwargs)
+    if decision["allowed"]:
+        return kwargs
+    reason = "; ".join(decision["reasons"])
+    message = f"claude-litellm context guard rejected request before provider dispatch: {reason}"
+    if LiteLLMBadRequestError is not None:
+        model = str(kwargs.get("model") or kwargs.get("deployment_model_name") or "unknown")
+        raise LiteLLMBadRequestError(message=message, model=model, llm_provider="claude-litellm")
+    raise GatewayContextWindowError(message)
+
+
+def _context_guard_applies(call_type: Any) -> bool:
+    if call_type is None:
+        # LiteLLM reports None for an unknown call type. Unknown generation
+        # paths must not become an escape hatch around the route contract.
+        return True
+    value = getattr(call_type, "value", call_type)
+    return str(value) in _CONTEXT_GUARDED_CALL_TYPES
 
 
 def gateway_cost_guardrail_decision(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -298,9 +511,13 @@ def enforce_cost_guardrail(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 class GatewayOutputClamp(CustomLogger):
     async def async_pre_call_deployment_hook(self, kwargs: dict[str, Any], call_type: Any) -> dict[str, Any]:
+        enforce_reasoning_effort_policy(kwargs)
         # Clamp first so the guardrail prices the post-clamp request,
         # not the client's pre-clamp ask.
-        return enforce_cost_guardrail(clamp_token_reservations(kwargs))
+        clamped = clamp_token_reservations(kwargs)
+        if _context_guard_applies(call_type):
+            enforce_context_window(clamped)
+        return enforce_cost_guardrail(clamped)
 
 
 proxy_handler_instance = GatewayOutputClamp()
