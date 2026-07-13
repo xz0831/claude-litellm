@@ -60,11 +60,12 @@ user and can read that user's accessible files, including package state, and the
 client currently authenticates to LiteLLM with its master/admin key. Adversarial
 containment requires a separate OS account or container.
 
-Local providers use an explicit loopback `api_base` and do not require a secret.
-The public `model register` command intentionally covers this simple
-single-key/no-auth shape only; complex provider credential schemas require a
-reviewed package change. OAuth routes are package-owned, not synthesized with
-`api_key: none`.
+Packaged oMLX routes use an explicit loopback `api_base` with no secret. A
+user-registered loopback server must still declare either its dedicated API-key
+environment variable or explicit `none`. The public `model register` command
+intentionally covers this simple single-key/no-auth shape only; complex
+provider credential schemas require a reviewed package change. OAuth routes are
+package-owned, not synthesized with `api_key: none`.
 
 OAuth providers require an explicit login command before the proxy can route to
 them. The proxy is launched through a package bootstrap that installs the
@@ -77,10 +78,20 @@ OAuth is marked experimental because LiteLLM implements the Codex subscription
 backend, while OpenAI does not document that backend as a general third-party
 gateway contract. xAI OAuth uses LiteLLM's first-party xAI OAuth adapter. The
 launcher and Python bootstrap both remove LiteLLM's ChatGPT/xAI inference-base
-environment overrides before provider code runs. The OAuth guard also pins both
-adapter methods to the packaged provider constants, covering environment values
-introduced by a later loader. OAuth routes consequently never trust ambient
-variables for an origin that will receive a bearer token.
+environment overrides before provider code runs. The OAuth guard pins the
+ChatGPT and xAI authenticator base getters to packaged provider constants and
+also pins ChatGPT Responses URL construction, including the request-level
+`api_base` path. It repairs an older partial-hook marker rather than trusting it
+as proof that every getter is guarded. OAuth routes consequently never trust an
+ambient or later-injected variable for an origin that will receive a bearer
+token.
+
+The same exact-version ChatGPT hook closes two LiteLLM 1.92.0 compatibility
+gaps. It recovers valid streamed output items when a terminal Responses event
+omits its output list, and converts Claude Code's ordered, list-valued Anthropic
+system text blocks into top-level Responses `instructions`. Anthropic-only
+cache hints are dropped; an unknown non-text system block fails locally. Proxy
+startup verifies these required patches before accepting traffic.
 
 The managed proxy is intentionally single-process. `NUM_WORKERS` is pinned to
 `1`, and reload, gunicorn, hypercorn, Granian and multi-worker modes are rejected
@@ -98,6 +109,12 @@ its allowed distribution hashes; installation uses `pip --require-hashes` and
 does not perform a fresh dependency resolution. An upgrade requires all
 deterministic translation, effort, OAuth redaction and tool-resume tests to
 pass before either direct pins or their lock move.
+
+Claude Code and oMLX are external installations rather than files in this
+Python lock. The current compatibility snapshot was exercised with Claude Code
+2.1.207 and oMLX 0.5.1; a later external release requires the same live model
+qualification and smoke checks rather than inheriting that result by version
+assumption.
 
 Installed packages record the source commit, runtime versions, dependency
 inventory, and a path/type/mode/size/byte fingerprint of `pyvenv.cfg`, the
@@ -142,6 +159,27 @@ Before proxy startup, both generated outputs are rendered in memory and
 compared byte-for-byte with the installed files under that same configuration
 lock. Direct edits, stale callback wiring, or half-applied alias changes fail
 closed with an instruction to run `claude-litellm sync`.
+
+## Qualification evidence
+
+`model qualify` holds the model-mutation lock across synchronization, the live
+exchange, evidence publication, and optional alias activation. Gate-set v2
+checks text SSE, Claude's list-valued system blocks, forced and streamed native
+tool calls, exact `tool_result` continuation, and the adaptive-thinking effort
+shape sent by Claude Code. A PASS is transport evidence for one provider model
+and one effective gateway/runtime state; it is not a permanent provider claim
+or proof that an effort level changed exploration depth.
+
+Each completed live-verifier run atomically replaces that route's previous
+record. It stores `attemptedAt`, `passed`, `providerModel`, `gateSetVersion`,
+verifier exit code, effective-config/verifier/install-manifest hashes, source
+commit, runtime content fingerprint, and the individual gate results.
+`qualifiedAt` exists only on PASS. A failed live-gate run therefore becomes a
+failure tombstone instead of leaving stale success evidence; a preflight error
+that prevents verifier execution does not publish a record. Only
+`model qualify --activate-tier` makes alias activation conditional on this
+result; direct route launch and the administrative `harness alias set` command
+remain explicit bypasses.
 
 One Claude process maps every tier and subagent to the initial validated route.
 This is deliberate: effort, compaction, context, and output controls are

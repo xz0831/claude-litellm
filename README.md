@@ -16,9 +16,10 @@ the product on one stable protocol: Anthropic Messages into LiteLLM.
 Requirements: macOS, Claude Code, Python 3.13.x, Rust/Cargo, `jq`, `node`,
 `ruby`, `ripgrep`, `perl`, and `curl`. LiteLLM 1.92.0 supports Python `<3.14`
 and has no macOS wheel, so a fresh runtime builds its native extension from
-source. If `rustup` is already installed, the installer can prepare its pinned
-minimal Rust 1.97.0 toolchain;
-otherwise install a current Rust first (for example, `brew install rust`).
+source. The build needs Rust 1.97.0 or newer. If no suitable selected toolchain
+exists and `rustup` is available, the installer provisions the exact minimal
+Rust 1.97.0 toolchain; otherwise install a current Rust first (for example,
+`brew install rust`).
 
 ```zsh
 git clone https://github.com/xz0831/claude-litellm.git
@@ -30,11 +31,11 @@ The Python dependency contract has direct pins in
 `config/python-requirements.in` and a fully resolved, hash-locked
 `config/python-requirements.lock`. The installer uses pip's `--require-hashes`
 mode rather than resolving during installation. The current direct pins are
-LiteLLM 1.92.0, Prisma 0.15.0, and pip 26.1.2 on Python 3.13; Rust 1.97.0 is the
-pinned macOS build toolchain. The installer records source/runtime provenance
-and a deterministic byte fingerprint of `pyvenv.cfg`, the complete runtime
-`bin` tree, and complete `site-packages`—including `__pycache__` directories and
-`.pyc` files—then publishes one shim:
+LiteLLM 1.92.0, Prisma 0.15.0, and pip 26.1.2 on Python 3.13. The manifest
+records the Rust version actually used. The installer records source/runtime
+provenance and a deterministic byte fingerprint of `pyvenv.cfg`, the complete
+runtime `bin` tree, and complete `site-packages`—including `__pycache__`
+directories and `.pyc` files—then publishes one shim:
 
 ```text
 ~/.local/share/claude-litellm
@@ -46,8 +47,9 @@ dependency; the two environments are isolated.
 
 Legacy `ai-litellm-fabric` and `ai-litellm` installations are migrated through a
 byte-verified full backup under `~/.local/share/claude-litellm-backups`. Claude
-transcripts/history are preserved; Codex state remains in the backup but is not
-imported into the Claude-only package.
+transcripts/history are preserved. Codex state and legacy OAuth state remain in
+the backup but are not imported into the Claude-only package; log in to
+ChatGPT/Grok again after a legacy migration when those routes are needed.
 
 ## Use
 
@@ -81,6 +83,8 @@ One Claude process is pinned to the route selected at launch. Every Claude tier
 and subagent points to that validated route because effort, context, and output
 settings are process-global. To change providers, exit and relaunch
 `claude-litellm <route>`; in-session `/model` is not a cross-provider switch.
+Use `claude-litellm --list` to see the current effective route names, including
+oMLX models discovered on this machine.
 
 ## OAuth
 
@@ -112,19 +116,40 @@ claude-litellm auth logout chatgpt
 
 Offline CI validates adapter imports, route boot, token paths, refresh behavior,
 redaction and Anthropic/tool translation. It deliberately does not authorize a
-real subscription account. After login, run live qualification; its six gates
-include Claude-style system blocks, text streaming, tool calls, continuation,
-and adaptive effort before treating an OAuth route as end-to-end qualified.
+real subscription account. After login, run `model qualify`. Its six live gates
+are clean Anthropic text SSE, a list-valued Claude system prompt whose two
+markers survive the round trip, a forced native `tool_use`, streamed
+`input_json_delta` that reconstructs valid JSON, exact `tool_result`
+continuation, and Claude Code's adaptive-thinking plus `output_config.effort`
+request shape. Cloud qualification can issue six billable provider requests.
 
-LiteLLM 1.92.0 has an upstream ChatGPT streaming defect where a valid
-`response.output_item.done` can be lost when `response.completed.output` is
-empty. The managed bootstrap applies an exact-version, ChatGPT-only recovery
-shim and refuses startup if that required shim is inactive.
+Every completed live-verifier run replaces the route's prior evidence,
+including when a gate fails, so a stale PASS cannot survive a failed live-gate
+retry. Preflight errors that prevent the verifier from running do not publish a
+new record. Evidence is tied to the provider model, gate-set version,
+effective-config and verifier hashes, install-manifest hash, source commit, and
+runtime fingerprint. Tier activation through `model qualify --activate-tier`
+happens only after the current run passes.
+
+LiteLLM 1.92.0 needs two exact-version, ChatGPT-only compatibility fixes. It can
+lose a valid `response.output_item.done` when `response.completed.output` is
+empty, and it leaves Claude Code's list-valued Anthropic system prompt as a
+Responses `role=system` input that the ChatGPT Codex backend rejects. The
+managed bootstrap recovers streamed output and converts ordered text blocks to
+top-level `instructions`, dropping only Anthropic-only `cache_control` hints
+and failing locally on a future non-text system block. Startup refuses to
+continue when either required hook is inactive.
 
 OAuth tokens are stored under `~/.local/share/claude-litellm/state/auth` with
 private permissions and are scrubbed from the Claude child environment. This
 reduces accidental propagation; it is not a sandbox against code running as the
 same macOS user.
+
+The launcher and bootstrap remove `CHATGPT_API_BASE`,
+`OPENAI_CHATGPT_API_BASE`, `XAI_OAUTH_API_BASE`, and `XAI_API_BASE`. Guarded
+provider methods pin bearer-token traffic to LiteLLM's packaged provider
+origins, including ChatGPT's request-level `api_base` path, so an inherited or
+later-injected override cannot redirect an OAuth request.
 
 ## Operations
 
@@ -168,7 +193,7 @@ passthrough. Complex cloud auth needs a reviewed source change and reinstall.
 The ChatGPT/xAI OAuth names are fixed package routes: `--api-key-env none`
 means genuinely no authentication, not OAuth.
 
-## Included routes
+## Packaged routes
 
 - `Kimi-K2.7-Code-openrouter`
 - `GLM-5.2-openrouter`
@@ -178,10 +203,24 @@ means genuinely no authentication, not OAuth.
 - `GPT-5.4-chatgpt-oauth`
 - `Grok-4.5-xai-oauth`
 
-The packaged Claude tier defaults are in `config/claude-litellm/settings.json`;
-user choices are stored in `~/.config/claude-litellm/settings.json`. Any
-registered real route can also be selected directly without pretending it is
-an Anthropic model.
+The packaged tier defaults are `fable` → Kimi, `opus` → GLM, `sonnet` → MiMo,
+and `haiku` → Qwen3.6-27B. Repository defaults are declared in
+`config/claude-litellm/settings.json`; installation publishes them as immutable
+`config/claude-litellm/settings.base.json`, while the historical
+`settings.json` path becomes generated effective state. Durable user choices
+are stored in `~/.config/claude-litellm/settings.json`. Any real route can also
+be selected directly without pretending it is an Anthropic model.
+
+`sync` also discovers loopback oMLX models from `/v1/models`. Those routes are
+machine/runtime state and are intentionally not hard-coded in this list; run
+`claude-litellm --list` for the current effective set.
+
+Validation snapshot — 2026-07-14, source commit `bf2c5be`: all seven packaged
+routes plus `Qwen3.5-9B-MLX-8bit-omlx`, `Qwen3.5-27B-4bit-omlx`, and
+`Qwen3-VL-8B-Instruct-4bit-omlx` passed all six gate-set v2 checks. Both OAuth
+routes also completed a real one-turn Claude Code `--print` sentinel smoke.
+This is point-in-time compatibility evidence, not a permanent entitlement,
+availability, or behavioral-effort guarantee.
 
 ## Safety
 
@@ -228,9 +267,13 @@ explicit destructive variant. User overlays and Keychain entries remain.
 
 ```zsh
 ./scripts/check.zsh
-./scripts/verify_litellm_token_clamp.py --json
-./scripts/verify_tool_call_fidelity.py --json
-~/.local/share/claude-litellm/runtime/venv/bin/python scripts/verify_user_config_overlay.py
+root="${CLAUDE_LITELLM_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/claude-litellm}"
+runtime="$root/runtime/venv"
+"$runtime/bin/python" -I -B scripts/verify_oauth_adapters.py
+"$runtime/bin/python" -I -B scripts/verify_litellm_token_clamp.py \
+  --litellm-bin "$runtime/bin/litellm" --json
+"$runtime/bin/python" -I -B scripts/verify_tool_call_fidelity.py --json
+"$runtime/bin/python" -I -B scripts/verify_user_config_overlay.py
 ```
 
 To intentionally update a direct pin or adopt newer compatible transitive

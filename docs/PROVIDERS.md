@@ -66,14 +66,17 @@ absent from the live router rather than opening a device flow. Explicit
 login/logout restarts a running managed proxy so that deployment state follows
 credential state. The managed bootstrap also removes `CHATGPT_API_BASE` and
 `OPENAI_CHATGPT_API_BASE` before LiteLLM imports or sends a request. OAuth bearer
-tokens are also pinned in the guarded adapter method to LiteLLM's packaged
-ChatGPT backend origin; custom ChatGPT OAuth inference origins are not supported
-as ambient configuration.
+tokens are pinned to LiteLLM's packaged ChatGPT backend origin in both the
+authenticator base getter and Responses URL construction. The latter ignores a
+request-level explicit `api_base`, closing a second redirect path; a legacy
+partial-hook marker is repaired rather than trusted. Custom ChatGPT OAuth
+inference origins are not supported as ambient or request configuration.
 
 The deterministic suite does not perform a real ChatGPT subscription login or
 provider request. Its generic GPT translation mock is not proof of the
-`chatgpt/*` provider-specific wire. A live prompt plus tool call is required
-after the user authorizes the account.
+`chatgpt/*` provider-specific wire. After account authorization, run
+`model qualify GPT-5.4-chatgpt-oauth` for all six live transport gates, then use
+a real Claude Code `--print` request as a separate end-client smoke test.
 
 LiteLLM 1.92.0 also drops streamed output items when ChatGPT closes with an
 empty `response.completed.output`. The package carries a version-gated recovery
@@ -102,7 +105,9 @@ The managed bootstrap removes `XAI_OAUTH_API_BASE` and `XAI_API_BASE` before
 LiteLLM imports or sends an OAuth request, and the guarded adapter method returns
 the packaged xAI API origin even if a later loader reintroduces either variable.
 Offline tests validate xAI OAuth adapter selection and safe refresh behavior,
-but a live tool-call probe is still required after account authorization.
+but `model qualify Grok-4.5-xai-oauth` is still required after account
+authorization; it covers the complete six-gate contract rather than only a
+single tool-call probe. A real Claude Code smoke remains a separate final check.
 The 500K input window comes from xAI's Grok 4.5 model catalog. xAI does not
 publish a separate maximum completion length, so this project deliberately uses
 a conservative 32K owned-policy output ceiling instead of claiming 500K output.
@@ -119,7 +124,9 @@ The registry therefore stores `model_info.x_reasoning_efforts` separately from
 `supports_reasoning`. Current provider contracts are:
 
 - Kimi K2.7 Code and MiMo V2.5: reasoning is available, but no selectable
-  effort levels are advertised.
+  effort levels are advertised. Their sixth-gate PASS means the gateway removed
+  the unsupported `high` selection while retaining adaptive/provider-default
+  reasoning; it is not evidence that `high` reached the upstream.
 - GLM 5.2 through OpenRouter: OpenRouter advertises `xhigh` and `high`, but the
   effective selectable contract is `high` only. LiteLLM 1.92's Anthropic
   pass-through adapter checks its own model registry and normalizes both
@@ -131,7 +138,8 @@ The registry therefore stores `model_info.x_reasoning_efforts` separately from
   not publish selectable levels for this subscription route, and the logged-in
   upstream has not been traced or behaviorally compared. Explicit effort is
   therefore disabled pending that evidence, not because the local slot is
-  absent.
+  absent. Its sixth-gate PASS likewise tests the gateway's remove-and-preserve
+  policy, not upstream receipt of `high`.
 - Grok 4.5: `low`, `medium`, `high`; reasoning cannot be disabled.
 
 `claude-litellm` rejects an explicit unsupported `--effort` before starting the
