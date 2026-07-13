@@ -13,8 +13,11 @@ the product on one stable protocol: Anthropic Messages into LiteLLM.
 
 ## Install
 
-Requirements: macOS, Claude Code, Python 3.11.x, `jq`, `node`, `ruby`,
-`ripgrep`, `perl`, and `curl`.
+Requirements: macOS, Claude Code, Python 3.11.x, Rust/Cargo, `jq`, `node`,
+`ruby`, `ripgrep`, `perl`, and `curl`. LiteLLM 1.92.0 has no macOS wheel, so a
+fresh runtime builds its native extension from source. If `rustup` is already
+installed, the installer can prepare its pinned minimal Rust 1.96.0 toolchain;
+otherwise install a current Rust first (for example, `brew install rust`).
 
 ```zsh
 git clone https://github.com/xz0831/claude-litellm.git

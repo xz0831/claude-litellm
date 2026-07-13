@@ -16,6 +16,7 @@ preflight_stage=""
 
 readonly LITELLM_VERSION="1.92.0"
 readonly PRISMA_VERSION="0.15.0"
+readonly RUST_TOOLCHAIN_VERSION="1.96.0"
 
 usage() {
   cat <<'EOF'
@@ -279,7 +280,7 @@ preflight() {
   done
   if (( ${#missing[@]} )); then
     echo "Missing claude-litellm install dependencies: ${missing[*]}" >&2
-    echo "Typical macOS packages: brew install python@3.11 node jq ripgrep" >&2
+    echo "Typical macOS packages: brew install python@3.11 node jq ripgrep rust" >&2
     if (( ! dry_run )); then
       exit 1
     fi
@@ -471,7 +472,65 @@ runtime_is_current() {
   runtime_python_matches_pins "$python" >/dev/null 2>&1
 }
 
-install_runtime() {
+rust_toolchain_usable() {
+  local selector="${1:-}" rustc_version cargo_path rustc_path
+  if [[ -n "$selector" ]]; then
+    cargo_path="$(rustup which --toolchain "$selector" cargo 2>/dev/null)" || return 1
+    rustc_path="$(rustup which --toolchain "$selector" rustc 2>/dev/null)" || return 1
+    [[ -x "$cargo_path" && -x "$rustc_path" ]] || return 1
+    "$cargo_path" --version >/dev/null 2>&1 || return 1
+    rustc_version="$("$rustc_path" --version 2>/dev/null | awk '{print $2}')" || return 1
+  else
+    cargo --version >/dev/null 2>&1 || return 1
+    rustc_version="$(rustc --version 2>/dev/null | awk '{print $2}')" || return 1
+  fi
+  python3.11 - "$rustc_version" <<'PY'
+import re
+import sys
+match = re.match(r"^(\d+)\.(\d+)\.(\d+)", sys.argv[1])
+sys.exit(0 if match and tuple(map(int, match.groups())) >= (1, 86, 0) else 1)
+PY
+}
+
+prepare_runtime_build_toolchain() {
+  # LiteLLM 1.92.0 publishes Linux wheels but no macOS wheel. A fresh macOS
+  # runtime therefore builds its maturin extension from the sdist. Do this
+  # preflight before stopping a proxy or mutating package files so a missing
+  # compiler cannot leave a partial upgrade.
+  runtime_is_current && return 0
+  [[ "$(uname -s)" == Darwin ]] || return 0
+
+  if command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1 && \
+     rust_toolchain_usable; then
+    return 0
+  fi
+
+  # GitHub macOS runners and many developer machines already have rustup but no
+  # selected toolchain. Reuse or install the pinned minimal profile without
+  # changing the user's global default; RUSTUP_TOOLCHAIN is inherited only by
+  # this installer and its pip build subprocess.
+  if command -v rustup >/dev/null 2>&1; then
+    local pinned_cargo
+    if ! rust_toolchain_usable "$RUST_TOOLCHAIN_VERSION"; then
+      log "Preparing minimal Rust $RUST_TOOLCHAIN_VERSION toolchain for the LiteLLM macOS build."
+      rustup toolchain install "$RUST_TOOLCHAIN_VERSION" --profile minimal --no-self-update
+    fi
+    pinned_cargo="$(rustup which --toolchain "$RUST_TOOLCHAIN_VERSION" cargo)"
+    export PATH="${pinned_cargo:h}:$PATH"
+    export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN_VERSION"
+    rust_toolchain_usable || {
+      echo "Rust $RUST_TOOLCHAIN_VERSION was installed, but a usable cargo/rustc is still unavailable." >&2
+      return 1
+    }
+    return 0
+  fi
+
+  echo "LiteLLM $LITELLM_VERSION has no macOS wheel and requires Rust/Cargo for its source build." >&2
+  echo "Install it first (for example: brew install rust), then rerun the installer." >&2
+  return 1
+}
+
+stage_runtime() {
   if (( dry_run )); then
     log "dry-run stage isolated Python 3.11 runtime: litellm[proxy]==$LITELLM_VERSION prisma==$PRISMA_VERSION"
     return 0
@@ -481,9 +540,11 @@ install_runtime() {
     return 0
   fi
 
-  mkdir -p "$prefix/runtime"
-  chmod 700 "$prefix/runtime"
-  runtime_stage="$prefix/runtime/.venv-stage.$$"
+  # Keep the expensive/networked build outside the destination package. It is
+  # on the same filesystem as the final prefix so publication can still use an
+  # atomic rename after the running proxy has been stopped.
+  mkdir -p "${prefix:h}"
+  runtime_stage="${prefix:h}/.claude-litellm-venv-stage.$$"
   rm -rf "$runtime_stage"
   python3.11 -m venv "$runtime_stage"
   PIP_DISABLE_PIP_VERSION_CHECK=1 "$runtime_stage/bin/python" -m pip install \
@@ -500,6 +561,21 @@ assert metadata.version("prisma") == expected_prisma
 import litellm, prisma  # noqa: F401
 PY
 
+  log "Staged isolated LiteLLM runtime $LITELLM_VERSION."
+}
+
+install_runtime() {
+  (( dry_run )) && return 0
+  if [[ -z "$runtime_stage" ]]; then
+    runtime_is_current || {
+      echo "No validated staged runtime is available for publication." >&2
+      return 1
+    }
+    return 0
+  fi
+
+  mkdir -p "$prefix/runtime"
+  chmod 700 "$prefix/runtime"
   local current="$prefix/runtime/venv"
   local previous="$prefix/runtime/.venv-previous.$$"
   local staged_root="$runtime_stage"
@@ -751,11 +827,18 @@ if (( migrate_legacy )); then
   "$repo_root/scripts/migrate-legacy.zsh" --destination "$prefix" --preflight-only
 fi
 
+(( dry_run )) || prepare_runtime_build_toolchain
+
 log "Installing claude-litellm from $repo_root"
 log "Package: $prefix"
 (( install_shim )) && log "Public command: $bin_dir/claude-litellm"
 (( install_shim )) || log "Public shim disabled for this staged/custom install."
 (( dry_run )) && log "Dry run: no files will be changed"
+
+# Complete the networked/native runtime build before stopping the live proxy or
+# replacing any package file. Only the already-validated venv is published in
+# the mutation phase below.
+stage_runtime
 
 # Never replace a venv or package files underneath a live proxy. A PID is only
 # signalled after both its command line and the prefix-owned runtime/config path
